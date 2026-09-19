@@ -1,0 +1,40 @@
+services:
+  - type: web
+    name: clipcraft-backend
+    runtime: docker
+    dockerfilePath: backend/Dockerfile
+    dockerContext: backend
+    plan: standard
+    region: oregon
+    healthCheckPath: /health
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: STORAGE_MODE
+        value: cloud
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DB_NAME
+        value: clipcraft
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: AI_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: GEMINI_API_BASE
+        value: https://generativelanguage.googleapis.com/v1beta
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ALLOWED_ORIGINS
+        value: "http://localhost:3000,http://localhost:3001,https://clipcraft.vercel.app"
+      - key: RAPIDAPI_KEY
+        sync: false
+      - key: RAPIDAPI_HOST
+        value: "youtube-media-downloader.p.rapidapi.com"

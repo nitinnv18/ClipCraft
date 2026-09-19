@@ -1,0 +1,33 @@
+# Python caches & virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Temporary media files & downloads
+tmp_media/
+*.mp4
+*.m4a
+*.webm
+*.srt
+*.vtt
+*.part
+*.ytdl
+
+# Logs & OS
+*.log
+logs/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,131 @@
+# ==============================================================================
+# ClipCraft Master .gitignore
+# Production-ready ignore rules for Next.js (Vercel) + FastAPI (Render) + Python
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. Environment & Secrets Management
+# ------------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.env
+backend/.env
+frontend/userpanel/.env.local
+frontend/userpanel/.env*.local
+frontend/adminpanel/.env.local
+frontend/adminpanel/.env*.local
+
+# ------------------------------------------------------------------------------
+# 2. Python, FastAPI & Bytecode Caches
+# ------------------------------------------------------------------------------
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+# Python virtualenv internals (do not block src/lib)
+/lib/
+/lib64/
+!**/src/lib/**
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+env/
+venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Testing & Coverage
+.pytest_cache/
+**/.pytest_cache/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# ------------------------------------------------------------------------------
+# 3. Node.js & Next.js (Userpanel & Adminpanel)
+# ------------------------------------------------------------------------------
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+out/
+**/out/
+.eslintcache
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# Package Manager Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ------------------------------------------------------------------------------
+# 4. Media Processing, FFmpeg & Temporary Storage
+# ------------------------------------------------------------------------------
+tmp_media/
+**/tmp_media/
+backend/tmp_media/
+*.mp4
+*.m4a
+*.webm
+*.srt
+*.vtt
+*.part
+*.ytdl
+
+# ------------------------------------------------------------------------------
+# 5. OS & IDE Specific Files
+# ------------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+[Dd]esktop.ini
+
+# Editors & IDEs
+.vscode/
+**/.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-workspace
+*.suo
+*.ntvs*
+*.njsproj
+*.user
+*.useros
+*.bak
+
+# General Logs
+*.log
+logs/
+**/logs/
