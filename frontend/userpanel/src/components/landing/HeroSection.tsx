@@ -4,7 +4,7 @@ import React from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { DemoInput } from "@/components/landing/DemoInput";
-import { ArrowRight, ChevronDown, CheckCircle2, ShieldCheck, Zap } from "lucide-react";
+import { ArrowRight, ChevronDown, BrainCircuit, Smartphone, Scissors, Zap } from "lucide-react";
 
 export const HeroSection: React.FC = () => {
   return (
@@ -24,7 +24,7 @@ export const HeroSection: React.FC = () => {
 
         {/* Supporting Copy */}
         <p className="text-sm sm:text-base lg:text-lg text-gray-400 max-w-2xl mx-auto leading-relaxed mb-8">
-          Paste a YouTube video. Our AI finds the moments worth watching and turns them into ready-to-share short clips.
+          Upload your raw video. Our AI finds the moments worth watching and turns them into ready-to-share short clips.
         </p>
 
         {/* CTAs */}
@@ -60,15 +60,15 @@ export const HeroSection: React.FC = () => {
         {/* Micro Trust Indicators */}
         <div className="mt-8 flex flex-wrap items-center justify-center gap-6 text-[11px] font-mono text-gray-400 uppercase">
           <div className="flex items-center gap-1.5">
-            <CheckCircle2 className="w-3.5 h-3.5 text-amber-500" />
+            <BrainCircuit className="w-3.5 h-3.5 text-amber-500" />
             <span>Transcript NLP Hook Detection</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <CheckCircle2 className="w-3.5 h-3.5 text-amber-500" />
+            <Smartphone className="w-3.5 h-3.5 text-amber-500" />
             <span>9:16 Vertical Video Reframing</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <CheckCircle2 className="w-3.5 h-3.5 text-amber-500" />
+            <Scissors className="w-3.5 h-3.5 text-amber-500" />
             <span>Sentence Boundary Snapping</span>
           </div>
         </div>

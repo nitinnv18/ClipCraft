@@ -1,11 +1,12 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import Link from "next/link";
-import { useAuth } from "@/context/AuthContext";
+import Image from "next/image";
 import { api } from "@/lib/api";
-import { VideoJob, Clip } from "@/types";
+import { logger } from "@/lib/logger";
+import { VideoJob } from "@/types";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -17,26 +18,18 @@ import {
   Copy,
   Check,
   Download,
-  Share2,
   Sparkles,
-  Clock,
-  Video,
   Film,
   AlertTriangle,
   Play,
   Pause,
   Volume2,
   VolumeX,
-  Subtitles,
-  CheckCircle2,
-  ExternalLink,
   Layers,
 } from "lucide-react";
 
 export default function JobDetailPage() {
   const params = useParams<{ id: string }>();
-  const router = useRouter();
-  const { user } = useAuth();
 
   const [job, setJob] = useState<VideoJob | null>(null);
   const [loading, setLoading] = useState(true);
@@ -60,18 +53,37 @@ export default function JobDetailPage() {
     if (!params?.id) return;
     try {
       const data = await api.getJob(params.id);
-      setJob(data);
+      setJob((prev) => {
+        if (!prev) return data;
+        if (
+          prev.status === data.status &&
+          prev.progress === data.progress &&
+          prev.stage === data.stage &&
+          prev.clips?.length === data.clips?.length
+        ) {
+          return prev;
+        }
+        return data;
+      });
       setError(null);
-      if (data.clips && data.clips.length > 0 && !activeClipId) {
-        setActiveClipId(data.clips[0].id);
+      if (data.clips && data.clips.length > 0) {
+        const firstClipId = data.clips[0].id;
+        setActiveClipId((curr) => curr || firstClipId);
       }
-    } catch (err: any) {
-      setError(err.message || "Failed to load job details.");
+    } catch (err: unknown) {
+      logger.warn("Job polling transient notice:", err);
+      // Only set fatal error if job details were never loaded
+      setJob((curr) => {
+        if (!curr) {
+          setError(err instanceof Error ? err.message : "Failed to load job details.");
+        }
+        return curr;
+      });
     } finally {
       setLoading(false);
       setIsRefreshing(false);
     }
-  }, [params?.id, activeClipId]);
+  }, [params?.id]);
 
   const handleManualRefresh = async () => {
     setIsRefreshing(true);
@@ -83,9 +95,8 @@ export default function JobDetailPage() {
   }, [fetchJob]);
 
   // Auto poll while job is active with visibility awareness
-  useEffect(() => {
-    if (!job) return;
-    const isProcessing = [
+  const isJobActive = Boolean(
+    job && [
       "queued",
       "processing",
       "fetching",
@@ -94,8 +105,11 @@ export default function JobDetailPage() {
       "rendering",
       "uploading",
       "finalizing",
-    ].includes(job.status);
-    if (!isProcessing) return;
+    ].includes(job.status)
+  );
+
+  useEffect(() => {
+    if (!isJobActive) return;
 
     const interval = setInterval(() => {
       if (typeof document !== "undefined" && document.hidden) return;
@@ -114,7 +128,7 @@ export default function JobDetailPage() {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [job, fetchJob]);
+  }, [isJobActive, fetchJob]);
 
   useEffect(() => {
     if (job?.clips && job.clips.length > 0 && !activeClipId) {
@@ -225,7 +239,7 @@ export default function JobDetailPage() {
         <div className="flex items-center gap-4 flex-1 min-w-0">
           <div className="w-20 h-12 bg-[#1b1d22] border border-[#2b2e36] flex items-center justify-center flex-shrink-0 relative overflow-hidden">
             {job.thumbnail ? (
-              <img src={getMediaUrl(job.thumbnail)} alt="" className="w-full h-full object-cover" />
+              <Image src={getMediaUrl(job.thumbnail)} alt={job.title || "Job thumbnail"} fill className="object-cover" unoptimized />
             ) : (
               <Film className="w-5 h-5 text-gray-400" />
             )}
@@ -238,7 +252,7 @@ export default function JobDetailPage() {
 
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">
-              <Badge variant={job.status as any}>{job.status}</Badge>
+              <Badge variant={job.status}>{job.status}</Badge>
               <span className="text-[10px] font-mono text-gray-400 uppercase">
                 {clips.length} / {job.clipCount} Clips Generated
               </span>
@@ -258,8 +272,8 @@ export default function JobDetailPage() {
             <span className="text-gray-200 font-bold">{job.settings?.format || "9:16 Vertical"}</span>
           </div>
           <div>
-            <span className="text-[10px] text-gray-500 uppercase block">Captions</span>
-            <span className="text-emerald-400 font-bold">{job.settings?.captions ? "Burned" : "Off"}</span>
+            <span className="text-[10px] text-gray-500 uppercase block">Engine</span>
+            <span className="text-amber-400 font-bold">Local WASM</span>
           </div>
         </div>
       </div>
@@ -317,7 +331,8 @@ export default function JobDetailPage() {
             <div className="flex flex-col gap-3">
               {clips.map((clip, idx) => {
                 const isActive = clip.id === activeClip?.id;
-                const scoreVal = Math.round((clip.viralityScore ?? clip.score ?? 0.85) * (clip.viralityScore ? 1 : 100));
+                const rawScore = clip.score ?? 85;
+                const scoreVal = rawScore <= 1 ? Math.round(rawScore * 100) : Math.round(rawScore);
 
                 return (
                   <div
@@ -396,86 +411,107 @@ export default function JobDetailPage() {
             <span>Live 9:16 Vertical Preview</span>
             {activeClip ? (
               <span className="text-amber-400 font-bold">
-                {Math.round((activeClip.viralityScore ?? activeClip.score ?? 0.85) * (activeClip.viralityScore ? 1 : 100))}% Score
+                {(() => {
+                  const rawScore = activeClip.score ?? 85;
+                  return rawScore <= 1 ? Math.round(rawScore * 100) : Math.round(rawScore);
+                })()}% Score
               </span>
             ) : null}
           </div>
 
-          {/* 9:16 Vertical Player Frame */}
-          <div className="relative w-full max-w-[280px] sm:max-w-[300px] aspect-[9/16] bg-black border border-[#2b2e36] flex flex-col justify-between p-3 overflow-hidden">
-            {/* Top HUD */}
-            <div className="flex items-center justify-between text-[10px] font-mono text-gray-300 z-20 bg-[#0a0b0d]/90 px-2.5 py-1.5 border border-[#26282f]">
-              <span className="text-amber-400 font-bold uppercase truncate max-w-[170px]">
-                {activeClip?.title || "Video Clip"}
-              </span>
-              <span>{activeClip ? `${Math.round(activeClip.duration)}s` : "00:00"}</span>
-            </div>
+          {/* Video Player Frame */}
+          {(() => {
+            const clipFormat = activeClip?.aspectRatio || job?.settings?.format || "9:16";
+            const isSquare = clipFormat.includes("1:1");
+            const isLandscape = clipFormat.includes("16:9");
+            const frameClass = isSquare
+              ? "relative w-full max-w-[340px] sm:max-w-[360px] aspect-square bg-black border border-[#2b2e36] flex flex-col justify-between p-3 overflow-hidden transition-all duration-300"
+              : isLandscape
+              ? "relative w-full max-w-[440px] sm:max-w-[480px] aspect-video bg-black border border-[#2b2e36] flex flex-col justify-between p-3 overflow-hidden transition-all duration-300"
+              : "relative w-full max-w-[280px] sm:max-w-[300px] aspect-[9/16] bg-black border border-[#2b2e36] flex flex-col justify-between p-3 overflow-hidden transition-all duration-300";
 
-            {/* Video Element / Visual Center */}
-            <div className="absolute inset-0 flex items-center justify-center bg-black overflow-hidden">
-              {activeMediaUrl ? (
-                <video
-                  ref={videoRef}
-                  key={activeMediaUrl}
-                  src={activeMediaUrl}
-                  poster={activeClip?.thumbnailUrl ? getMediaUrl(activeClip.thumbnailUrl) : undefined}
-                  playsInline
-                  autoPlay
-                  controls={false}
-                  className="w-full h-full object-contain"
-                  onPlay={() => setIsPlaying(true)}
-                  onPause={() => setIsPlaying(false)}
-                />
-              ) : (
-                <div className="flex flex-col items-center gap-3 p-4 text-center text-gray-500 font-mono text-xs">
-                  <Film className="w-8 h-8 text-amber-500 animate-pulse" />
-                  <span>Video Clip Rendering...</span>
+            return (
+              <div className={frameClass}>
+                {/* Top HUD */}
+                <div className="flex items-center justify-between text-[10px] font-mono text-gray-300 z-20 bg-[#0a0b0d]/90 px-2.5 py-1.5 border border-[#26282f]">
+                  <span className="text-amber-400 font-bold uppercase truncate max-w-[170px]">
+                    {activeClip?.title || "Video Clip"}
+                  </span>
+                  <span>{activeClip ? `${Math.round(activeClip.duration)}s` : "00:00"}</span>
                 </div>
-              )}
 
-              {/* Subtitles Overlay if toggled */}
-              {showCaptions && activeClip?.hook && (
-                <div className="absolute bottom-14 inset-x-3 z-10 pointer-events-none">
-                  <div className="bg-black/85 border border-white/20 p-2.5 text-center text-xs font-extrabold text-white uppercase tracking-tight leading-tight shadow-2xl backdrop-blur-sm">
-                    <span className="text-amber-400">&ldquo;</span>
-                    {activeClip.hook}
-                    <span className="text-amber-400">&rdquo;</span>
+                {/* Video Element / Visual Center */}
+                <div className="absolute inset-0 flex items-center justify-center bg-black overflow-hidden">
+                  {activeMediaUrl ? (
+                    <video
+                      ref={videoRef}
+                      key={activeMediaUrl}
+                      src={activeMediaUrl}
+                      poster={activeClip?.thumbnailUrl ? getMediaUrl(activeClip.thumbnailUrl) : undefined}
+                      playsInline
+                      autoPlay
+                      controls={false}
+                      className="w-full h-full object-contain"
+                      onPlay={() => setIsPlaying(true)}
+                      onPause={() => setIsPlaying(false)}
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center gap-3 p-4 text-center text-gray-500 font-mono text-xs">
+                      <Film className="w-8 h-8 text-amber-500 animate-pulse" />
+                      <span>Video Clip Rendering...</span>
+                    </div>
+                  )}
+
+                  {/* Subtitles Overlay if toggled */}
+                  {showCaptions && activeClip?.hook && (
+                    <div className="absolute bottom-14 inset-x-3 z-10 pointer-events-none">
+                      <div className="bg-black/85 border border-white/20 p-2.5 text-center text-xs font-extrabold text-white uppercase tracking-tight leading-tight shadow-2xl backdrop-blur-sm">
+                        <span className="text-amber-400">&ldquo;</span>
+                        {activeClip.hook}
+                        <span className="text-amber-400">&rdquo;</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Bottom Video Controls HUD */}
+                <div className="flex items-center justify-between z-20 bg-[#0a0b0d]/90 p-2 border border-[#26282f] text-xs">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={togglePlay}
+                      className="p-1.5 bg-[#1f2127] hover:bg-[#2c2f38] text-white border border-[#353842] cursor-pointer"
+                      aria-label="Play/Pause"
+                    >
+                      {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                    </button>
+                    <button
+                      onClick={toggleMute}
+                      className="p-1.5 bg-[#1f2127] hover:bg-[#2c2f38] text-gray-300 hover:text-white border border-[#353842] cursor-pointer"
+                      aria-label="Toggle Mute"
+                    >
+                      {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setShowCaptions(!showCaptions)}
+                      className={`px-2 py-1 text-[10px] font-mono uppercase font-bold border cursor-pointer transition-colors ${
+                        showCaptions
+                          ? "bg-amber-500 text-black border-amber-500"
+                          : "bg-[#181a1f] text-gray-400 border-[#2f323a]"
+                      }`}
+                    >
+                      CC {showCaptions ? "ON" : "OFF"}
+                    </button>
+                    <span className="text-[10px] font-mono text-gray-400">
+                      {clipFormat}
+                    </span>
                   </div>
                 </div>
-              )}
-            </div>
-
-            {/* Bottom Video Controls HUD */}
-            <div className="flex items-center justify-between z-20 bg-[#0a0b0d]/90 p-2 border border-[#26282f] text-xs">
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={togglePlay}
-                  className="p-1.5 bg-[#1f2127] hover:bg-[#2c2f38] text-white border border-[#353842] cursor-pointer"
-                  aria-label="Play/Pause"
-                >
-                  {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                </button>
-                <button
-                  onClick={toggleMute}
-                  className="p-1.5 bg-[#1f2127] hover:bg-[#2c2f38] text-gray-300 hover:text-white border border-[#353842] cursor-pointer"
-                  aria-label="Toggle Mute"
-                >
-                  {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-                </button>
               </div>
-
-              <button
-                onClick={() => setShowCaptions(!showCaptions)}
-                className={`px-2 py-1 text-[10px] font-mono uppercase font-bold border cursor-pointer transition-colors ${
-                  showCaptions
-                    ? "bg-amber-500 text-black border-amber-500"
-                    : "bg-[#181a1f] text-gray-400 border-[#2f323a]"
-                }`}
-              >
-                CC {showCaptions ? "ON" : "OFF"}
-              </button>
-            </div>
-          </div>
+            );
+          })()}
 
           {/* Action Buttons below preview */}
           {activeClip && (
@@ -485,12 +521,10 @@ export default function JobDetailPage() {
                 download={`clip-${activeClip.id}.mp4`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="w-full"
+                className="w-full py-2.5 px-4 bg-amber-500 hover:bg-amber-600 text-black font-extrabold text-xs uppercase tracking-wider border border-amber-500 flex items-center justify-center gap-2 cursor-pointer transition-colors"
               >
-                <button className="w-full py-2.5 px-4 bg-amber-500 hover:bg-amber-600 text-black font-extrabold text-xs uppercase tracking-wider border border-amber-500 flex items-center justify-center gap-2 cursor-pointer transition-colors">
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Download This Clip (MP4)</span>
-                </button>
+                <Download className="w-3.5 h-3.5" />
+                <span>Download This Clip (MP4)</span>
               </a>
 
               <button

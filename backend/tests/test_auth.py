@@ -106,3 +106,26 @@ async def test_get_me_with_valid_token():
 
     assert resp.status_code == 200
     assert resp.json()["email"] == "test_me@example.com"
+
+
+@pytest.mark.asyncio
+async def test_account_lockout_after_consecutive_failed_logins():
+    """Five consecutive wrong password attempts should trigger account lockout (HTTP 429)."""
+    email = "test_lockout@example.com"
+    async with AsyncClient(transport=TRANSPORT, base_url=BASE) as client:
+        await client.post("/api/auth/register", json={
+            "email": email,
+            "password": "Password123!"
+        })
+        for _ in range(5):
+            await client.post("/api/auth/login", json={
+                "email": email,
+                "password": "WrongPassword!"
+            })
+        # 6th attempt should return 429 Too Many Requests
+        resp = await client.post("/api/auth/login", json={
+            "email": email,
+            "password": "WrongPassword!"
+        })
+        assert resp.status_code == 429
+        assert "temporarily locked" in resp.json()["detail"].lower()

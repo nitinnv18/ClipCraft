@@ -4,7 +4,6 @@ from typing import Dict, Any
 from fastapi import APIRouter, Depends
 from app.core.config import settings
 from app.db.mongodb import get_database
-from app.db.memory_store import memory_store
 from app.models.admin import AdminResponse
 from app.api.admin.auth import get_current_admin
 from app.queue.redis_queue import queue_instance
@@ -44,7 +43,7 @@ async def get_system_health(current_admin: AdminResponse = Depends(get_current_a
     ffmpeg_status = {
         "status": "healthy" if ffmpeg_path else "warning",
         "available": bool(ffmpeg_path),
-        "path": ffmpeg_path or "fallback_simulation"
+        "path": "installed" if ffmpeg_path else "unavailable"
     }
 
     # 5. Cloudinary Status
@@ -54,7 +53,7 @@ async def get_system_health(current_admin: AdminResponse = Depends(get_current_a
         "mode": "cloud" if settings.CLOUDINARY_CLOUD_NAME else "local_disk"
     }
 
-    # 6. AI Engine Provider (Google Gemini API)
+    # 6. AI Engine Provider (Groq Cloud AI)
     ai_status = {
         "status": "healthy",
         "model": settings.AI_MODEL,

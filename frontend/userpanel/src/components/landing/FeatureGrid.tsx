@@ -1,8 +1,7 @@
-"use client";
 
 import React from "react";
 import {
-  Sparkles,
+  BrainCircuit,
   Layers,
   Smartphone,
   Scissors,
@@ -16,7 +15,7 @@ import {
 export const FeatureGrid: React.FC = () => {
   const features = [
     {
-      icon: Sparkles,
+      icon: BrainCircuit,
       title: "AI Moment Detection",
       description:
         "Find hooks, insights, stories, useful answers and memorable moments automatically using deep transcript evaluation.",

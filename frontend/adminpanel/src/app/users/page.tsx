@@ -3,15 +3,15 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { adminApi } from "@/lib/adminApi";
+import { logger } from "@/lib/logger";
 import { AdminUserRow } from "@/types/admin";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
+import { formatDate } from "@/lib/utils";
 import {
   Users,
   Search,
-  Filter,
   UserX,
   UserCheck,
   Trash2,
@@ -19,6 +19,7 @@ import {
   RefreshCw,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
 } from "lucide-react";
 
 export default function AdminUsersPage() {
@@ -29,6 +30,7 @@ export default function AdminUsersPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   // Dialog State
   const [actionUser, setActionUser] = useState<AdminUserRow | null>(null);
@@ -38,6 +40,7 @@ export default function AdminUsersPage() {
 
   const loadUsers = async () => {
     setIsLoading(true);
+    setError(null);
     try {
       const res = await adminApi.listUsers({
         search: search.trim() || undefined,
@@ -48,7 +51,8 @@ export default function AdminUsersPage() {
       setUsers(res.users);
       setTotal(res.total);
     } catch (err) {
-      console.error(err);
+      logger.error("Failed to load users list", err);
+      setError(err instanceof Error ? err.message : "Failed to load users list.");
     } finally {
       setIsLoading(false);
     }
@@ -79,8 +83,8 @@ export default function AdminUsersPage() {
       setActionUser(null);
       setSuspensionReason("");
       loadUsers();
-    } catch (err: any) {
-      alert(err.message || "Failed to execute action.");
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Failed to execute action.");
     } finally {
       setActionLoading(false);
     }
@@ -147,18 +151,21 @@ export default function AdminUsersPage() {
 
         {/* Filters */}
         <div className="flex items-center gap-3">
-          <select
-            value={statusFilter}
-            onChange={(e) => {
-              setStatusFilter(e.target.value);
-              setPage(1);
-            }}
-            className="bg-[#181a1f] border border-[#30333d] px-3 py-2 text-xs font-mono uppercase text-gray-200 focus:outline-none focus:border-amber-500"
-          >
-            <option value="">All Statuses</option>
-            <option value="active">Active Only</option>
-            <option value="suspended">Suspended Only</option>
-          </select>
+          <div className="relative">
+            <select
+              value={statusFilter}
+              onChange={(e) => {
+                setStatusFilter(e.target.value);
+                setPage(1);
+              }}
+              className="bg-[#181a1f] border border-[#30333d] pl-3 pr-8 py-2 text-xs font-mono uppercase text-gray-200 focus:outline-none focus:border-amber-500 appearance-none cursor-pointer"
+            >
+              <option value="">All Statuses</option>
+              <option value="active">Active Only</option>
+              <option value="suspended">Suspended Only</option>
+            </select>
+            <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
 
           <Button variant="outline" size="sm" onClick={loadUsers} className="font-mono text-xs">
             <RefreshCw className="w-3 h-3" />
@@ -171,6 +178,14 @@ export default function AdminUsersPage() {
         {isLoading ? (
           <div className="p-12 text-center text-xs font-mono text-gray-400">
             Fetching users...
+          </div>
+        ) : error ? (
+          <div className="p-12 text-center text-xs font-mono text-red-400 flex flex-col items-center gap-3">
+            <Users className="w-6 h-6 text-red-500" />
+            <span>{error}</span>
+            <Button variant="outline" size="sm" onClick={loadUsers}>
+              Retry Connection
+            </Button>
           </div>
         ) : users.length === 0 ? (
           <div className="p-12 text-center text-xs font-mono text-gray-400 flex flex-col items-center gap-2">
@@ -206,7 +221,7 @@ export default function AdminUsersPage() {
                     <td className="p-3 text-gray-300">{u.clipCount}</td>
                     <td className="p-3 text-gray-400">{u.storageMb} MB</td>
                     <td className="p-3 text-gray-400 text-[11px]">
-                      {new Date(u.createdAt).toLocaleDateString()}
+                      {formatDate(u.createdAt)}
                     </td>
                     <td className="p-3 text-right">
                       <div className="flex items-center justify-end gap-1.5">

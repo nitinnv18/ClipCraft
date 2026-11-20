@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, Any
 from fastapi import APIRouter, Depends
 from app.db.mongodb import get_database
@@ -7,6 +7,7 @@ from app.models.admin import AdminResponse
 from app.api.admin.auth import get_current_admin
 from app.queue.redis_queue import queue_instance
 from app.core.logging import logger
+from app.core.utils import format_iso_utc
 
 router = APIRouter(prefix="/dashboard", tags=["Admin Dashboard"])
 
@@ -43,8 +44,14 @@ async def get_admin_dashboard_metrics(current_admin: AdminResponse = Depends(get
                         {"$count": "count"}
                     ],
                     "avgDuration": [
-                        {"$match": {"status": "completed", "duration": {"$gt": 0}}},
-                        {"$group": {"_id": None, "avg": {"$avg": "$duration"}}}
+                        {"$match": {"status": "completed", "completedAt": {"$exists": True, "$ne": None}, "createdAt": {"$exists": True, "$ne": None}}},
+                        {"$project": {
+                            "turnaroundSec": {
+                                "$divide": [{"$subtract": ["$completedAt", "$createdAt"]}, 1000]
+                            }
+                        }},
+                        {"$match": {"turnaroundSec": {"$gt": 0, "$lte": 7200}}},
+                        {"$group": {"_id": None, "avg": {"$avg": "$turnaroundSec"}}}
                     ]
                 }}
             ]
@@ -72,7 +79,7 @@ async def get_admin_dashboard_metrics(current_admin: AdminResponse = Depends(get
             # --- Recent Jobs (top 6 with user email lookup) ---
             recent_raw = await db.jobs.find(
                 {},
-                {"_id": 1, "userId": 1, "title": 1, "status": 1, "stage": 1,
+                {"_id": 1, "userId": 1, "userEmail": 1, "title": 1, "status": 1, "stage": 1,
                  "progress": 1, "clipCount": 1, "createdAt": 1, "completedAt": 1, "error": 1}
             ).sort("createdAt", -1).limit(6).to_list(6)
 
@@ -84,17 +91,21 @@ async def get_admin_dashboard_metrics(current_admin: AdminResponse = Depends(get
             recent_jobs_clean = []
             for j in recent_raw:
                 uid = str(j.get("userId", ""))
+                st_val = j.get("status", "queued")
+                st_clean = st_val.value if hasattr(st_val, "value") else str(st_val)
+                stg_val = j.get("stage", "initializing")
+                stg_clean = stg_val.value if hasattr(stg_val, "value") else str(stg_val)
                 recent_jobs_clean.append({
-                    "id": str(j.get("_id")),
+                    "id": str(j.get("_id") or j.get("id")),
                     "userId": uid,
-                    "userEmail": user_email_map.get(uid, "unknown"),
+                    "userEmail": j.get("userEmail") or user_email_map.get(uid, "unknown"),
                     "title": j.get("title", "Untitled Job"),
-                    "status": j.get("status", "queued"),
-                    "stage": j.get("stage", "initializing"),
+                    "status": st_clean,
+                    "stage": stg_clean,
                     "progress": j.get("progress", 0),
                     "clipCount": j.get("clipCount", 0),
-                    "createdAt": str(j.get("createdAt", "")),
-                    "completedAt": str(j.get("completedAt", "")) if j.get("completedAt") else None,
+                    "createdAt": format_iso_utc(j.get("createdAt")),
+                    "completedAt": format_iso_utc(j.get("completedAt")),
                     "error": j.get("error")
                 })
 
@@ -111,7 +122,7 @@ async def get_admin_dashboard_metrics(current_admin: AdminResponse = Depends(get
                     "errorType": "JobProcessingError",
                     "message": fj.get("error") or "Processing terminated unexpectedly.",
                     "status": "CRITICAL",
-                    "timestamp": str(fj.get("updatedAt") or fj.get("createdAt", ""))
+                    "timestamp": format_iso_utc(fj.get("updatedAt") or fj.get("createdAt"))
                 }
                 for fj in failed_raw
             ]
@@ -160,17 +171,21 @@ async def get_admin_dashboard_metrics(current_admin: AdminResponse = Depends(get
         for j in sorted(all_jobs, key=lambda x: str(x.get("createdAt", "")), reverse=True)[:6]:
             uid = str(j.get("userId", ""))
             user_match = next((u for u in all_users if str(u.get("_id") or u.get("id")) == uid), None)
+            st_val = j.get("status", "queued")
+            st_clean = st_val.value if hasattr(st_val, "value") else str(st_val)
+            stg_val = j.get("stage", "initializing")
+            stg_clean = stg_val.value if hasattr(stg_val, "value") else str(stg_val)
             recent_jobs_clean.append({
                 "id": str(j.get("id") or j.get("_id")),
                 "userId": uid,
-                "userEmail": user_match.get("email") if user_match else "unknown",
+                "userEmail": j.get("userEmail") or (user_match.get("email") if user_match else "unknown"),
                 "title": j.get("title", "Untitled Job"),
-                "status": j.get("status", "queued"),
-                "stage": j.get("stage", "initializing"),
+                "status": st_clean,
+                "stage": stg_clean,
                 "progress": j.get("progress", 0),
                 "clipCount": j.get("clipCount", 0),
-                "createdAt": str(j.get("createdAt", "")),
-                "completedAt": str(j.get("completedAt", "")) if j.get("completedAt") else None,
+                "createdAt": format_iso_utc(j.get("createdAt")),
+                "completedAt": format_iso_utc(j.get("completedAt")),
                 "error": j.get("error")
             })
 
@@ -181,7 +196,7 @@ async def get_admin_dashboard_metrics(current_admin: AdminResponse = Depends(get
                 "errorType": "JobProcessingError",
                 "message": fj.get("error") or "Processing terminated unexpectedly.",
                 "status": "CRITICAL",
-                "timestamp": str(fj.get("updatedAt") or fj.get("createdAt", ""))
+                "timestamp": format_iso_utc(fj.get("updatedAt") or fj.get("createdAt"))
             }
             for fj in [j for j in all_jobs if j.get("status") in ["failed", "error"]][:5]
         ]

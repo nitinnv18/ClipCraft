@@ -1,12 +1,18 @@
+import os
+import shutil
+import re
 import uuid
 from datetime import datetime
-from typing import Optional, List, Dict, Any
-from fastapi import APIRouter, HTTPException, Depends, Query, Request, status
+from typing import Optional, Dict, Any
+from fastapi import APIRouter, HTTPException, Depends, Query
+from app.core.config import settings
 from app.db.mongodb import get_database
 from app.db.memory_store import memory_store
 from app.models.admin import AdminResponse, AdminRole
 from app.api.admin.auth import get_current_admin, require_roles
 from app.core.logging import logger
+from app.core.utils import format_iso_utc
+from app.providers.storage.cloudinary_provider import cloudinary_provider
 
 router = APIRouter(prefix="/users", tags=["Admin Users"])
 
@@ -26,7 +32,7 @@ async def list_users(
         try:
             query: Dict[str, Any] = {}
             if search:
-                s = search.strip()
+                s = re.escape(search.strip())
                 query["$or"] = [
                     {"email": {"$regex": s, "$options": "i"}},
                     {"_id": {"$regex": s, "$options": "i"}},
@@ -66,8 +72,8 @@ async def list_users(
                     "jobCount": jc,
                     "clipCount": cc,
                     "storageMb": round((cc * 12) + (jc * 0.4), 1),
-                    "createdAt": str(u.get("createdAt", "")),
-                    "lastActive": str(u.get("updatedAt") or u.get("createdAt", ""))
+                    "createdAt": format_iso_utc(u.get("createdAt")),
+                    "lastActive": format_iso_utc(u.get("updatedAt") or u.get("createdAt"))
                 })
 
             return {
@@ -114,8 +120,8 @@ async def list_users(
             "jobCount": len(user_jobs),
             "clipCount": len(user_clips),
             "storageMb": round((len(user_clips) * 12) + (len(user_jobs) * 0.4), 1),
-            "createdAt": str(u.get("createdAt", "")),
-            "lastActive": str(u.get("updatedAt") or u.get("createdAt", ""))
+            "createdAt": format_iso_utc(u.get("createdAt")),
+            "lastActive": format_iso_utc(u.get("updatedAt") or u.get("createdAt"))
         })
 
     return {
@@ -169,10 +175,10 @@ async def get_user_detail(user_id: str, current_admin: AdminResponse = Depends(g
             "id": user_id,
             "email": user_doc.get("email"),
             "status": user_doc.get("status") or "active",
-            "createdAt": str(user_doc.get("createdAt", "")),
-            "updatedAt": str(user_doc.get("updatedAt", "")),
+            "createdAt": format_iso_utc(user_doc.get("createdAt")),
+            "updatedAt": format_iso_utc(user_doc.get("updatedAt")),
             "suspensionReason": user_doc.get("suspensionReason"),
-            "suspendedAt": str(user_doc.get("suspendedAt", "")) if user_doc.get("suspendedAt") else None,
+            "suspendedAt": format_iso_utc(user_doc.get("suspendedAt")),
             "suspendedBy": user_doc.get("suspendedBy")
         },
         "usage": {
@@ -188,7 +194,7 @@ async def get_user_detail(user_id: str, current_admin: AdminResponse = Depends(g
                 "title": j.get("title", "Untitled"),
                 "status": j.get("status", "queued"),
                 "clipCount": j.get("clipCount", 0),
-                "createdAt": str(j.get("createdAt", ""))
+                "createdAt": format_iso_utc(j.get("createdAt"))
             }
             for j in user_jobs[:10]
         ],
@@ -198,7 +204,7 @@ async def get_user_detail(user_id: str, current_admin: AdminResponse = Depends(g
                 "title": c.get("title", "Untitled Clip"),
                 "duration": c.get("duration", 0),
                 "score": c.get("score", 90),
-                "createdAt": str(c.get("createdAt", ""))
+                "createdAt": format_iso_utc(c.get("createdAt"))
             }
             for c in user_clips[:10]
         ]
@@ -208,8 +214,7 @@ async def get_user_detail(user_id: str, current_admin: AdminResponse = Depends(g
 async def suspend_user(
     user_id: str,
     reason: Optional[str] = None,
-    request: Request = None,
-    current_admin: AdminResponse = Depends(get_current_admin)
+    current_admin: AdminResponse = Depends(require_roles([AdminRole.SUPER_ADMIN, AdminRole.ADMIN]))
 ):
     db = get_database()
     now = datetime.utcnow()
@@ -245,8 +250,7 @@ async def suspend_user(
 @router.post("/{user_id}/unsuspend")
 async def unsuspend_user(
     user_id: str,
-    request: Request = None,
-    current_admin: AdminResponse = Depends(get_current_admin)
+    current_admin: AdminResponse = Depends(require_roles([AdminRole.SUPER_ADMIN, AdminRole.ADMIN]))
 ):
     db = get_database()
     now = datetime.utcnow()
@@ -285,6 +289,78 @@ async def delete_user(
     current_admin: AdminResponse = Depends(require_roles([AdminRole.SUPER_ADMIN]))
 ):
     db = get_database()
+    temp_dir = settings.TEMP_STORAGE_DIR
+
+    # 1. Gather all clips for this user
+    user_clips = [c for c in memory_store.get_all_clips() if str(c.get("userId")) == user_id]
+    if db is not None:
+        try:
+            db_clips = await db.clips.find({"userId": user_id}).to_list(10000)
+            user_clips.extend(db_clips)
+        except Exception:
+            pass
+
+    # Clean up Cloudinary assets & local files for each clip
+    seen_clip_ids = set()
+    for c in user_clips:
+        cid = str(c.get("id") or c.get("_id"))
+        if cid in seen_clip_ids:
+            continue
+        seen_clip_ids.add(cid)
+
+        pub_id = c.get("cloudinaryPublicId")
+        if pub_id:
+            try:
+                await cloudinary_provider.delete_file(pub_id)
+            except Exception as e:
+                logger.warning(f"Failed to delete Cloudinary asset for clip {cid}: {e}")
+
+        candidates = [
+            os.path.join(temp_dir, "public_media", "clips", f"{cid}.mp4"),
+            os.path.join(temp_dir, "public_media", "thumbnails", f"{cid}.jpg"),
+        ]
+        if c.get("videoUrl"):
+            candidates.append(os.path.join(temp_dir, "public_media", "clips", os.path.basename(c["videoUrl"])))
+        if c.get("thumbnailUrl"):
+            candidates.append(os.path.join(temp_dir, "public_media", "thumbnails", os.path.basename(c["thumbnailUrl"])))
+        for fp in set(candidates):
+            try:
+                if os.path.isfile(fp):
+                    os.remove(fp)
+            except Exception:
+                pass
+        memory_store.delete_clip(cid)
+
+    # 2. Gather all jobs for this user
+    user_jobs = [j for j in memory_store.get_all_jobs() if str(j.get("userId")) == user_id]
+    if db is not None:
+        try:
+            db_jobs = await db.jobs.find({"userId": user_id}).to_list(10000)
+            user_jobs.extend(db_jobs)
+        except Exception:
+            pass
+
+    seen_job_ids = set()
+    for j in user_jobs:
+        jid = str(j.get("id") or j.get("_id"))
+        if jid in seen_job_ids:
+            continue
+        seen_job_ids.add(jid)
+
+        if j.get("thumbnail"):
+            thumb_path = os.path.join(temp_dir, "public_media", "thumbnails", os.path.basename(j["thumbnail"]))
+            if os.path.isfile(thumb_path):
+                try:
+                    os.remove(thumb_path)
+                except Exception:
+                    pass
+        job_dir = os.path.join(temp_dir, jid)
+        if os.path.isdir(job_dir):
+            try:
+                shutil.rmtree(job_dir, ignore_errors=True)
+            except Exception:
+                pass
+
     memory_store.delete_user(user_id)
     if db is not None:
         try:

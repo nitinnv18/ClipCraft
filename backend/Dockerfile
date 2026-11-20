@@ -20,11 +20,20 @@ COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
+# Create unprivileged system user for secure container execution
+RUN groupadd -g 10001 appuser && \
+    useradd -u 10001 -g appuser -s /bin/bash -m appuser && \
+    mkdir -p /app/tmp_media && \
+    chown -R appuser:appuser /app
+
 # Copy application source code
-COPY . /app
+COPY --chown=appuser:appuser . /app
+
+# Switch to non-root user
+USER appuser
 
 # Expose port (Render dynamically assigns $PORT)
 EXPOSE 8000
 
 # Start FastAPI application using Uvicorn
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

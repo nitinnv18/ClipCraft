@@ -1,7 +1,6 @@
-"use client";
 
 import React from "react";
-import { Search, Scissors, Share2, Clock, Check } from "lucide-react";
+import { Search, Scissors, Share2, Check } from "lucide-react";
 
 export const ValueProps: React.FC = () => {
   const benefits = [

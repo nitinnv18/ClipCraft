@@ -3,7 +3,7 @@ import shutil
 import uuid
 import asyncio
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any
 from app.core.config import settings
 from app.core.logging import logger
 from app.db.mongodb import get_database
@@ -11,19 +11,20 @@ from app.db.memory_store import memory_store
 from app.models.job import JobStatus, JobStage
 from app.models.clip import ClipCandidate
 from app.providers.transcript.youtube_transcript_provider import YouTubeTranscriptProvider
-from app.providers.ai.gemini_provider import GeminiProvider
+from app.providers.ai.groq_provider import GroqProvider
 from app.providers.storage.cloudinary_provider import CloudinaryStorageProvider
 from app.providers.video.ffmpeg_processor import FFmpegVideoProcessor
 from app.services.ranking_engine import ClipRankingEngine
 from app.services.boundary_optimizer import BoundaryOptimizer
 
 class VideoProcessingWorker:
-    def __init__(self):
+    def __init__(self, max_concurrent: int = 4):
         self.transcript_provider = YouTubeTranscriptProvider()
-        self.ai_provider = GeminiProvider()
+        self.ai_provider = GroqProvider()
         self.storage_provider = CloudinaryStorageProvider()
         self.video_processor = FFmpegVideoProcessor()
         self.is_running = False
+        self._semaphore = asyncio.Semaphore(max_concurrent)
 
     async def update_job_progress(
         self,
@@ -65,10 +66,45 @@ class VideoProcessingWorker:
         logger.info(f"[Job {job_id}] -> Stage: {stage_val}, Progress: {progress}%, Status: {status_val}")
 
     async def process_job(self, job_id: str, payload: Dict[str, Any]):
+        async with self._semaphore:
+            try:
+                # Enforce a 15-minute hard timeout so no job hangs worker concurrency indefinitely
+                await asyncio.wait_for(self._execute_job(job_id, payload), timeout=900.0)
+            except asyncio.TimeoutError:
+                logger.error(f"[Worker] Job {job_id} exceeded maximum processing timeout of 900 seconds.")
+                await self.update_job_progress(
+                    job_id,
+                    JobStage.FINALIZING,
+                    100,
+                    status=JobStatus.FAILED,
+                    error="Job processing exceeded timeout limit (15m). Please try a shorter video or upload directly."
+                )
+            finally:
+                from app.queue.redis_queue import queue_instance
+                try:
+                    await queue_instance.ack_job(job_id, payload)
+                except Exception as ack_err:
+                    logger.warning(f"Failed to ack job {job_id}: {ack_err}")
+
+    async def _execute_job(self, job_id: str, payload: Dict[str, Any]):
         job_work_dir = os.path.join(settings.TEMP_STORAGE_DIR, job_id)
         os.makedirs(job_work_dir, exist_ok=True)
         db = get_database()
-        loop = asyncio.get_event_loop()
+
+        async def _is_cancelled() -> bool:
+            if db is not None:
+                try:
+                    j = await db.jobs.find_one({"_id": job_id}, {"status": 1})
+                    if j and j.get("status") == "cancelled":
+                        return True
+                except Exception:
+                    pass
+            mem_j = memory_store.get_job(job_id)
+            return bool(mem_j and mem_j.get("status") == "cancelled")
+
+        if await _is_cancelled():
+            logger.info(f"Skipping cancelled job before start: {job_id}")
+            return
 
         try:
             source_type = payload.get("sourceType", "youtube")
@@ -95,7 +131,8 @@ class VideoProcessingWorker:
                 # Generate local thumbnail
                 local_thumb_path = os.path.join(job_work_dir, "video_thumb.jpg")
                 await self.video_processor.generate_thumbnail_from_video(source_video_path, local_thumb_path, timestamp=1.5)
-                thumb_upload = await self.storage_provider.upload_image(local_thumb_path, public_id_prefix="thumbnails")
+                save_to_cloud = payload.get("saveToCloud", False)
+                thumb_upload = await self.storage_provider.upload_image(local_thumb_path, public_id_prefix="thumbnails", force_local=not save_to_cloud)
 
                 video_info = {
                     "id": f"upload_{job_id[4:]}",
@@ -112,7 +149,7 @@ class VideoProcessingWorker:
                     metadata=video_info
                 )
 
-                # Extract audio from video file for Gemini transcription
+                # Extract audio from video file for Groq Whisper transcription
                 await self.update_job_progress(job_id, JobStage.TRANSCRIBING, 35)
                 local_audio_path = os.path.join(job_work_dir, "extracted_audio.mp3")
                 try:
@@ -210,6 +247,10 @@ class VideoProcessingWorker:
                 for c in ranked_clips
             ]
 
+            if await _is_cancelled():
+                logger.info(f"Aborting cancelled job before rendering: {job_id}")
+                return
+
             # 5. Acquire Source Video if not already local
             await self.update_job_progress(job_id, JobStage.RENDERING, 65)
 
@@ -235,7 +276,9 @@ class VideoProcessingWorker:
             total_clips = len(optimized_clips)
             
             for idx, candidate in enumerate(optimized_clips):
-                clip_index = idx + 1
+                if await _is_cancelled():
+                    logger.info(f"Stopping rendering loop for cancelled job {job_id}")
+                    return
                 clip_id = f"clip_{uuid.uuid4().hex[:12]}"
                 raw_clip_path = os.path.join(job_work_dir, f"{clip_id}.mp4")
                 raw_thumb_path = os.path.join(job_work_dir, f"{clip_id}.jpg")
@@ -258,10 +301,15 @@ class VideoProcessingWorker:
                     client_ip=client_ip
                 )
 
-                # Upload to Cloudinary / Storage
-                await self.update_job_progress(job_id, JobStage.UPLOADING, min(95, render_pct + 4))
-                video_upload = await self.storage_provider.upload_video(raw_clip_path, public_id_prefix="clips")
-                thumb_upload = await self.storage_provider.upload_image(raw_thumb_path, public_id_prefix="thumbnails")
+                # Upload to Cloudinary / Storage concurrently
+                save_to_cloud = payload.get("saveToCloud", False)
+                if save_to_cloud:
+                    await self.update_job_progress(job_id, JobStage.UPLOADING, min(95, render_pct + 4))
+                
+                # Run video and thumbnail uploads concurrently via asyncio.gather
+                video_task = self.storage_provider.upload_video(raw_clip_path, public_id_prefix="clips", force_local=not save_to_cloud)
+                thumb_task = self.storage_provider.upload_image(raw_thumb_path, public_id_prefix="thumbnails", force_local=not save_to_cloud)
+                video_upload, thumb_upload = await asyncio.gather(video_task, thumb_task)
 
                 # Extract clip-specific transcript segments and text
                 clip_segments = [
@@ -299,8 +347,8 @@ class VideoProcessingWorker:
                 if db is not None:
                     try:
                         await db.clips.insert_one(clip_record)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning(f"Failed to insert clip {clip_id} to DB: {e}")
 
                 generated_clips.append(clip_record)
 
@@ -313,6 +361,16 @@ class VideoProcessingWorker:
             )
             logger.info(f"Successfully processed job {job_id} with {len(generated_clips)} clips.")
 
+        except asyncio.CancelledError:
+            logger.info(f"Job {job_id} processing was cancelled.")
+            await self.update_job_progress(
+                job_id,
+                JobStage.FINALIZING,
+                100,
+                status=JobStatus.CANCELLED,
+                error="Job processing was cancelled."
+            )
+            raise
         except Exception as e:
             logger.error(f"Error processing job {job_id}: {e}", exc_info=True)
             await self.update_job_progress(
@@ -327,7 +385,67 @@ class VideoProcessingWorker:
                 if os.path.exists(job_work_dir):
                     shutil.rmtree(job_work_dir, ignore_errors=True)
                     logger.info(f"Cleaned up temporary workspace directory: {job_work_dir}")
+                # Purge raw uploaded file from ./tmp_media/uploads/ once processing terminates
+                if source_type == "upload" and source_video_path and os.path.exists(source_video_path):
+                    try:
+                        os.remove(source_video_path)
+                        logger.info(f"Cleaned up source uploaded video: {source_video_path}")
+                    except Exception as err:
+                        logger.warning(f"Failed to remove uploaded file {source_video_path}: {err}")
             except Exception as e:
                 logger.warning(f"Failed to clean temporary directory {job_work_dir}: {e}")
 
 worker_instance = VideoProcessingWorker()
+
+async def start_worker_daemon(max_concurrent: int = 4):
+    """Independent daemon loop pulling and executing jobs from the Redis queue."""
+    from app.queue.redis_queue import queue_instance
+    from app.db.mongodb import db_instance, connect_to_mongo
+    logger.info("Initializing Video Processing Worker Daemon...")
+    if not db_instance.is_connected:
+        await connect_to_mongo()
+    if not queue_instance.is_connected:
+        await queue_instance.initialize()
+    logger.info("Worker daemon ready. Listening for jobs on Redis queue...")
+
+    active_tasks = set()
+
+    try:
+        while True:
+            active_tasks = {t for t in active_tasks if not t.done()}
+            if len(active_tasks) >= max_concurrent:
+                await asyncio.sleep(0.2)
+                continue
+
+            try:
+                job_item = await queue_instance.get_next_job(timeout_seconds=3)
+                if job_item:
+                    job_id = job_item.get("job_id")
+                    payload = job_item.get("payload", {})
+                    if job_id:
+                        logger.info(f"[Worker] Dequeued job {job_id} from Redis. Processing...")
+                        task = asyncio.create_task(worker_instance.process_job(job_id, payload))
+                        task.add_done_callback(
+                            lambda t: logger.error(f"[Worker] Task error for job {job_id}: {t.exception()}")
+                            if not t.cancelled() and t.exception() else None
+                        )
+                        active_tasks.add(task)
+                else:
+                    await asyncio.sleep(0.2)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"Worker daemon error: {e}", exc_info=True)
+                await asyncio.sleep(2)
+    except asyncio.CancelledError:
+        logger.info("Worker daemon received cancellation signal. Shutting down...")
+    finally:
+        active_tasks = {t for t in active_tasks if not t.done()}
+        if active_tasks:
+            logger.info(f"Cancelling and gathering {len(active_tasks)} active worker tasks...")
+            for t in active_tasks:
+                t.cancel()
+            await asyncio.gather(*active_tasks, return_exceptions=True)
+
+if __name__ == "__main__":
+    asyncio.run(start_worker_daemon())

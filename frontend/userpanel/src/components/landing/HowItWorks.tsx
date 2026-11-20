@@ -1,28 +1,27 @@
-"use client";
 
 import React from "react";
 import Link from "next/link";
-import { ArrowRight, Link2, Cpu, Video, Download } from "lucide-react";
+import { ArrowRight, Upload, BrainCircuit, Scissors, Download } from "lucide-react";
 
 export const HowItWorks: React.FC = () => {
   const steps = [
     {
       number: "01",
-      icon: Link2,
-      title: "Paste",
-      description: "Add your YouTube video URL. The engine fetches transcript metadata and streams source details.",
+      icon: Upload,
+      title: "Upload",
+      description: "Drop your raw video file (.mp4, .mov, .webm). The engine extracts audio and video streams instantly.",
       detail: "Supports long-form podcasts, interviews, lectures & webinars",
     },
     {
       number: "02",
-      icon: Cpu,
+      icon: BrainCircuit,
       title: "Analyze",
       description: "AI analyzes the video transcript, detects engaging hooks, scores virality, and avoids dead air.",
       detail: "Sentence boundary snapping (±3.0s) ensures no cut-off words",
     },
     {
       number: "03",
-      icon: Video,
+      icon: Scissors,
       title: "Generate",
       description: "The system automatically creates multiple clips with 9:16 vertical crop and embedded subtitles.",
       detail: "FFmpeg headless rendering with 1080p vertical output",
@@ -93,7 +92,7 @@ export const HowItWorks: React.FC = () => {
         {/* CTA Bar */}
         <div className="mt-10 p-5 bg-[#141518] border border-[#272a31] flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="text-xs font-mono text-gray-300">
-            <span className="text-white font-bold uppercase">Ready to test?</span> Try pasting a YouTube link without registration.
+            <span className="text-white font-bold uppercase">Ready to test?</span> Drop a video file or test without registration.
           </div>
           <Link href="/dashboard">
             <button className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-black font-extrabold text-xs uppercase tracking-wider border border-amber-500 flex items-center gap-1.5 transition-colors">

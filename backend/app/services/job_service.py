@@ -5,19 +5,12 @@ from typing import List, Optional, Dict, Any
 from app.core.config import settings
 from app.db.mongodb import get_database
 from app.db.memory_store import memory_store
-from app.models.job import JobCreateRequest, JobResponse, JobStatus, JobStage
-from app.models.clip import ClipResponse
+from app.models.job import JobCreateRequest, JobStatus, JobStage
 from app.queue.redis_queue import queue_instance
-from app.providers.transcript.youtube_transcript_provider import YouTubeTranscriptProvider
+from app.core.utils import extract_youtube_id, utc_now
 from app.core.logging import logger
 
 class JobService:
-    @staticmethod
-    def validate_youtube_url(url: str) -> Optional[str]:
-        if not url:
-            return None
-        return YouTubeTranscriptProvider.extract_video_id(url)
-
     @staticmethod
     async def create_job(
         req: JobCreateRequest,
@@ -25,19 +18,20 @@ class JobService:
         background_tasks_handler=None,
         client_ip: Optional[str] = None
     ) -> Dict[str, Any]:
-        video_id = JobService.validate_youtube_url(req.youtubeUrl or "")
+        video_id = extract_youtube_id(req.youtubeUrl or "")
         if req.sourceType == "youtube" and not video_id:
             raise ValueError("Please enter a valid YouTube video URL.")
 
+        canonical_youtube_url = f"https://www.youtube.com/watch?v={video_id}" if video_id else None
         job_id = f"job_{uuid.uuid4().hex[:12]}"
-        now = datetime.utcnow()
+        now = utc_now()
         estimated_seconds = 15 + (req.clipCount * 8)
 
         job_doc = {
             "_id": job_id,
             "id": job_id,
             "userId": user_id,
-            "youtubeUrl": req.youtubeUrl,
+            "youtubeUrl": canonical_youtube_url,
             "videoId": video_id or "custom_video",
             "sourceType": req.sourceType or "youtube",
             "title": "Initializing video analysis...",
@@ -68,7 +62,7 @@ class JobService:
         payload = {
             "jobId": job_id,
             "userId": user_id,
-            "youtubeUrl": req.youtubeUrl,
+            "youtubeUrl": canonical_youtube_url,
             "videoId": video_id or "custom_video",
             "sourceType": req.sourceType or "youtube",
             "clipCount": req.clipCount,
@@ -82,7 +76,8 @@ class JobService:
         }
 
         await queue_instance.enqueue_job(job_id, payload)
-        if background_tasks_handler:
+        # If Redis queue is offline, execute in-process via background tasks as fallback
+        if not queue_instance.is_connected and background_tasks_handler:
             from app.workers.video_worker import worker_instance
             background_tasks_handler.add_task(worker_instance.process_job, job_id, payload)
 
@@ -104,7 +99,7 @@ class JobService:
         client_ip: Optional[str] = None
     ) -> Dict[str, Any]:
         job_id = f"job_{uuid.uuid4().hex[:12]}"
-        now = datetime.utcnow()
+        now = utc_now()
         estimated_seconds = 15 + (clip_count * 8)
 
         clean_title = os.path.splitext(filename)[0].replace("_", " ").title()
@@ -171,7 +166,8 @@ class JobService:
         }
 
         await queue_instance.enqueue_job(job_id, payload)
-        if background_tasks_handler:
+        # If Redis queue is offline, execute in-process via background tasks as fallback
+        if not queue_instance.is_connected and background_tasks_handler:
             from app.workers.video_worker import worker_instance
             background_tasks_handler.add_task(worker_instance.process_job, job_id, payload)
 
@@ -179,25 +175,46 @@ class JobService:
         return job_doc
 
     @staticmethod
-    async def get_user_jobs(user_id: str) -> List[Dict[str, Any]]:
+    async def get_user_jobs(user_id: str, limit: Optional[int] = None, skip: int = 0) -> List[Dict[str, Any]]:
         db = get_database()
         jobs = []
         if db is not None:
             try:
-                cursor = db.jobs.find({"userId": user_id}).sort("createdAt", -1)
-                async for doc in cursor:
-                    doc["id"] = doc.get("_id", doc.get("id"))
-                    jobs.append(doc)
+                query = db.jobs.find({"userId": user_id}).sort("createdAt", -1).skip(skip)
+                if limit:
+                    query = query.limit(limit)
+                jobs = await query.to_list(limit or 500)
+                if not jobs:
+                    return []
+
+                job_ids = [str(j.get("_id") or j.get("id")) for j in jobs]
+                
+                # Single batched query to fetch all clips for all jobs in 1 round-trip (O(1) round trips)
+                clips_cursor = db.clips.find({"jobId": {"$in": job_ids}}).sort("score", -1)
+                clips_by_job: Dict[str, list] = {jid: [] for jid in job_ids}
+                async for c in clips_cursor:
+                    c["id"] = str(c.get("_id") or c.get("id"))
+                    jid = str(c.get("jobId", ""))
+                    if jid in clips_by_job:
+                        clips_by_job[jid].append(c)
+
+                for j in jobs:
+                    j["id"] = str(j.get("_id") or j.get("id"))
+                    j["clips"] = clips_by_job.get(j["id"], [])
                 return jobs
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Batched get_user_jobs notice: {e}")
 
         for j in memory_store.jobs.values():
             if j.get("userId") == user_id:
                 c = dict(j)
                 c["id"] = c.get("_id", c.get("id"))
+                if not c.get("clips"):
+                    c["clips"] = memory_store.get_job_clips(c["id"])
                 jobs.append(c)
-        jobs.sort(key=lambda x: x.get("createdAt", datetime.min), reverse=True)
+        jobs.sort(key=lambda x: str(x.get("createdAt", "")), reverse=True)
+        if limit:
+            return jobs[skip:skip+limit]
         return jobs
 
     @staticmethod
@@ -292,17 +309,18 @@ class JobService:
 
         if db is not None:
             try:
+                public_media_root = os.path.abspath(os.path.join(settings.TEMP_STORAGE_DIR, "public_media"))
                 cursor = db.clips.find({"jobId": job_id})
                 async for c in cursor:
                     for url_field in [c.get("videoUrl"), c.get("thumbnailUrl")]:
                         if url_field and url_field.startswith("/api/media/"):
-                            rel_path = url_field.replace("/api/media/", "")
-                            full_p = os.path.join(settings.TEMP_STORAGE_DIR, "public_media", rel_path)
-                            if os.path.exists(full_p):
+                            rel_path = url_field.replace("/api/media/", "").lstrip("/\\")
+                            full_p = os.path.abspath(os.path.join(public_media_root, rel_path))
+                            if full_p.startswith(public_media_root + os.sep) and os.path.isfile(full_p):
                                 try:
                                     os.remove(full_p)
-                                except Exception:
-                                    pass
+                                except OSError as e:
+                                    logger.warning(f"Failed to remove clip file {full_p}: {e}")
                 await db.jobs.delete_one(query)
                 await db.clips.delete_many({"jobId": job_id})
             except Exception as e:

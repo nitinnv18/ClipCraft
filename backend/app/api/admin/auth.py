@@ -1,10 +1,10 @@
 import uuid
 from datetime import datetime, timedelta
 from typing import List
-from fastapi import APIRouter, HTTPException, Depends, status, Request
+from fastapi import APIRouter, HTTPException, Depends, status, Request, Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.core.config import settings
-from app.core.security import get_password_hash, verify_password, create_access_token, decode_access_token
+from app.core.security import get_password_hash, create_access_token, decode_access_token, verify_password_async
 from app.db.mongodb import get_database
 from app.db.memory_store import memory_store
 from app.models.admin import (
@@ -144,9 +144,17 @@ def require_roles(allowed_roles: List[AdminRole]):
 
 @router.post("/login", response_model=AdminTokenResponse)
 @limiter.limit(ADMIN_AUTH_LIMIT)
-async def admin_login(req: AdminLogin, request: Request):
-    await seed_default_super_admin()
+async def admin_login(req: AdminLogin, request: Request, response: Response):
     email = req.email.lower().strip()
+
+    lockout_secs = memory_store.get_lockout_remaining_seconds(email)
+    if lockout_secs:
+        mins = max(1, lockout_secs // 60)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many failed login attempts. Account temporarily locked for {mins} minute(s)."
+        )
+
     db = get_database()
     admin_doc = None
 
@@ -159,8 +167,11 @@ async def admin_login(req: AdminLogin, request: Request):
     if not admin_doc:
         admin_doc = memory_store.get_admin_by_email(email)
 
-    if not admin_doc or not verify_password(req.password, admin_doc.get("passwordHash", "")):
+    if not admin_doc or not await verify_password_async(req.password, admin_doc.get("passwordHash", "")):
+        memory_store.record_failed_login(email)
         raise HTTPException(status_code=401, detail="Invalid administrator email or password.")
+
+    memory_store.reset_failed_logins(email)
 
     if admin_doc.get("status") == AdminStatus.SUSPENDED.value:
         raise HTTPException(status_code=403, detail="This administrator account has been deactivated.")
@@ -217,6 +228,15 @@ async def admin_login(req: AdminLogin, request: Request):
     )
 
     logger.info(f"Admin signed in: {email} ({admin_res.role})")
+    response.set_cookie(
+        key="clipcraft_admin_token",
+        value=encoded_token,
+        httponly=True,
+        secure=settings.ENVIRONMENT == "production",
+        samesite="lax",
+        max_age=settings.ADMIN_TOKEN_EXPIRE_MINUTES * 60,
+        path="/"
+    )
     return AdminTokenResponse(access_token=encoded_token, admin=admin_res)
 
 @router.get("/me", response_model=AdminResponse)
@@ -224,5 +244,6 @@ async def get_admin_profile(current_admin: AdminResponse = Depends(get_current_a
     return current_admin
 
 @router.post("/logout")
-async def admin_logout(current_admin: AdminResponse = Depends(get_current_admin)):
+async def admin_logout(response: Response, current_admin: AdminResponse = Depends(get_current_admin)):
+    response.delete_cookie(key="clipcraft_admin_token", path="/")
     return {"message": "Admin session terminated successfully."}

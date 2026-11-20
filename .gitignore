@@ -8,13 +8,17 @@
 # ------------------------------------------------------------------------------
 .env
 .env.*
-!.env.example
+!**/.env.example
 *.env
 backend/.env
 frontend/userpanel/.env.local
 frontend/userpanel/.env*.local
 frontend/adminpanel/.env.local
 frontend/adminpanel/.env*.local
+*.pem
+*.key
+*.cert
+*.crt
 
 # ------------------------------------------------------------------------------
 # 2. Python, FastAPI & Bytecode Caches
@@ -52,9 +56,13 @@ ENV/
 env.bak/
 venv.bak/
 
-# Testing & Coverage
+# Testing, Coverage & Linters
 .pytest_cache/
 **/.pytest_cache/
+.ruff_cache/
+**/.ruff_cache/
+.mypy_cache/
+**/.mypy_cache/
 .coverage
 .coverage.*
 .cache
@@ -74,6 +82,10 @@ node_modules/
 **/.next/
 out/
 **/out/
+.turbo/
+**/.turbo/
+.vercel/
+**/.vercel/
 .eslintcache
 *.tsbuildinfo
 **/*.tsbuildinfo
@@ -98,9 +110,20 @@ backend/tmp_media/
 *.vtt
 *.part
 *.ytdl
+# Large WebAssembly Binaries (~30MB+)
+*.wasm
+frontend/userpanel/public/ffmpeg/*.wasm
 
 # ------------------------------------------------------------------------------
-# 5. OS & IDE Specific Files
+# 5. Local Databases & Storage
+# ------------------------------------------------------------------------------
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+
+# ------------------------------------------------------------------------------
+# 6. OS & IDE Specific Files
 # ------------------------------------------------------------------------------
 .DS_Store
 .DS_Store?

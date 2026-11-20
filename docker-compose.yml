@@ -1,0 +1,114 @@
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: clipcraft-mongodb
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: clipcraft-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: clipcraft-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=development
+      - MONGODB_URI=mongodb://mongodb:27017
+      - MONGODB_DB_NAME=clipcraft
+      - REDIS_URL=redis://redis:6379/0
+      - AI_PROVIDER=groq
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - GROQ_CHAT_MODEL=llama-3.3-70b-versatile
+      - GROQ_WHISPER_MODEL=whisper-large-v3-turbo
+      - JWT_SECRET=${JWT_SECRET:-super-secret-clipcraft-production-key-change-me}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3001}
+      - TEMP_STORAGE_DIR=/app/tmp_media
+    volumes:
+      - ./tmp_media:/app/tmp_media
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: clipcraft-worker
+    restart: unless-stopped
+    command: ["python", "-m", "app.workers.video_worker"]
+    environment:
+      - ENVIRONMENT=development
+      - MONGODB_URI=mongodb://mongodb:27017
+      - MONGODB_DB_NAME=clipcraft
+      - REDIS_URL=redis://redis:6379/0
+      - AI_PROVIDER=groq
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - GROQ_CHAT_MODEL=llama-3.3-70b-versatile
+      - GROQ_WHISPER_MODEL=whisper-large-v3-turbo
+      - JWT_SECRET=${JWT_SECRET:-super-secret-clipcraft-production-key-change-me}
+      - TEMP_STORAGE_DIR=/app/tmp_media
+    volumes:
+      - ./tmp_media:/app/tmp_media
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  userpanel:
+    build:
+      context: ./frontend/userpanel
+      dockerfile: Dockerfile
+    container_name: clipcraft-userpanel
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+
+  adminpanel:
+    build:
+      context: ./frontend/adminpanel
+      dockerfile: Dockerfile
+    container_name: clipcraft-adminpanel
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_APP_URL=http://localhost:3000
+      - JWT_SECRET=${JWT_SECRET:-super-secret-clipcraft-production-key-change-me}
+    depends_on:
+      - backend
+
+volumes:
+  mongo_data:
+  redis_data:

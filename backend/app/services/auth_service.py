@@ -3,13 +3,14 @@ from datetime import datetime
 from typing import Optional, Tuple
 from app.db.mongodb import get_database
 from app.db.memory_store import memory_store
-from app.core.security import get_password_hash, verify_password, create_access_token, decode_access_token
+from app.core.security import create_access_token, get_password_hash_async, verify_password_async
+from app.core.utils import utc_now
 from app.core.logging import logger
-from app.models.user import UserResponse, TokenResponse
+from app.models.user import UserResponse
 
 class AuthService:
     @staticmethod
-    async def get_user_by_id(user_id: str, token_email: Optional[str] = None) -> Optional[UserResponse]:
+    async def get_user_by_id(user_id: str) -> Optional[UserResponse]:
         db = get_database()
 
         # 1. MongoDB check
@@ -20,7 +21,12 @@ class AuthService:
                     created_at = user_doc.get("createdAt")
                     if isinstance(created_at, str):
                         created_at = datetime.fromisoformat(created_at)
-                    return UserResponse(id=user_doc["_id"], email=user_doc["email"], createdAt=created_at or datetime.utcnow())
+                    return UserResponse(
+                        id=user_doc["_id"],
+                        email=user_doc["email"],
+                        status=user_doc.get("status", "active"),
+                        createdAt=created_at or datetime.utcnow()
+                    )
             except Exception as e:
                 logger.warning(f"Error querying mongo user: {e}")
 
@@ -30,7 +36,12 @@ class AuthService:
             created_at = mem_user.get("createdAt")
             if isinstance(created_at, str):
                 created_at = datetime.fromisoformat(created_at)
-            return UserResponse(id=mem_user["_id"], email=mem_user["email"], createdAt=created_at or datetime.utcnow())
+            return UserResponse(
+                id=mem_user["_id"],
+                email=mem_user["email"],
+                status=mem_user.get("status", "active"),
+                createdAt=created_at or datetime.utcnow()
+            )
 
         return None
 
@@ -44,25 +55,18 @@ class AuthService:
         if db is not None:
             try:
                 existing_user = await db.users.find_one({"email": clean_email})
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"DB lookup existing user notice: {e}")
 
         if not existing_user:
             existing_user = memory_store.get_user_by_email(clean_email)
 
         if existing_user:
-            if verify_password(password, existing_user.get("passwordHash", "")):
-                token = create_access_token(subject=existing_user["_id"], email=clean_email)
-                created_at = existing_user.get("createdAt")
-                if isinstance(created_at, str):
-                    created_at = datetime.fromisoformat(created_at)
-                user_res = UserResponse(id=existing_user["_id"], email=clean_email, createdAt=created_at or datetime.utcnow())
-                return token, user_res, True
             raise ValueError("An account with this email already exists. Please sign in.")
 
         user_id = f"user_{uuid.uuid4().hex[:12]}"
-        password_hash = get_password_hash(password)
-        now = datetime.utcnow()
+        password_hash = await get_password_hash_async(password)
+        now = utc_now()
 
         user_doc = {
             "_id": user_id,
@@ -76,8 +80,8 @@ class AuthService:
         if db is not None:
             try:
                 await db.users.insert_one(user_doc)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to persist user to MongoDB: {e}")
 
         token = create_access_token(subject=user_id, email=clean_email)
         user_res = UserResponse(id=user_id, email=clean_email, createdAt=now)
@@ -86,6 +90,13 @@ class AuthService:
     @staticmethod
     async def authenticate_user(email: str, password: str) -> Optional[Tuple[str, UserResponse]]:
         clean_email = email.lower().strip()
+
+        # Check account lockout status
+        lockout_secs = memory_store.get_lockout_remaining_seconds(clean_email)
+        if lockout_secs:
+            mins = max(1, lockout_secs // 60)
+            raise ValueError(f"Too many failed login attempts. Account temporarily locked for {mins} minute(s).")
+
         db = get_database()
         user_doc = None
 
@@ -98,8 +109,16 @@ class AuthService:
         if not user_doc:
             user_doc = memory_store.get_user_by_email(clean_email)
 
-        if not user_doc or not verify_password(password, user_doc.get("passwordHash", "")):
+        if not user_doc or not await verify_password_async(password, user_doc.get("passwordHash", "")):
+            memory_store.record_failed_login(clean_email)
             return None
+
+        # Disallow suspended accounts from acquiring active session tokens
+        if user_doc.get("status") == "suspended":
+            raise ValueError("This account has been suspended. Please contact ClipCraft support.")
+
+        # Reset failed login count on successful authentication
+        memory_store.reset_failed_logins(clean_email)
 
         token = create_access_token(subject=user_doc["_id"], email=clean_email)
         created_at = user_doc.get("createdAt")

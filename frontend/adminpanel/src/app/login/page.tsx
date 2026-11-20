@@ -1,19 +1,18 @@
 "use client";
 
-import React, { useState } from "react";
-import { useRouter } from "next/navigation";
+import React, { useState, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { useAdminAuth } from "@/context/AdminAuthContext";
 import { adminApi } from "@/lib/adminApi";
 import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
-import { ShieldCheck, Lock, Scissors } from "lucide-react";
-
+import { Lock } from "lucide-react";
 import { AdminLogo } from "@/components/AdminLogo";
 
-export default function AdminLoginPage() {
-  const router = useRouter();
+function AdminLoginForm() {
   const { login } = useAdminAuth();
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -27,9 +26,17 @@ export default function AdminLoginPage() {
     try {
       const res = await adminApi.login(email, password);
       login(res.access_token, res.admin);
-    } catch (err: any) {
-      setError(err.message || "Invalid administrator credentials.");
-    } finally {
+      const redirectParam = searchParams.get("redirect");
+      const safeRedirect =
+        redirectParam &&
+        redirectParam.startsWith("/") &&
+        !redirectParam.startsWith("//") &&
+        !redirectParam.includes("\\")
+          ? redirectParam
+          : "/dashboard";
+      window.location.href = safeRedirect;
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Invalid administrator credentials.");
       setIsLoading(false);
     }
   };
@@ -85,11 +92,23 @@ export default function AdminLoginPage() {
               className="mt-2 font-bold flex items-center justify-center gap-2"
             >
               <Lock className="w-3.5 h-3.5" />
-              <span>Authenticate Session</span>
+              <span>{isLoading ? "Authenticating..." : "Authenticate Session"}</span>
             </Button>
           </form>
         </Card>
       </div>
     </div>
+  );
+}
+
+export default function AdminLoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-[#0a0b0d] flex items-center justify-center text-xs font-mono text-gray-500">
+        Loading console...
+      </div>
+    }>
+      <AdminLoginForm />
+    </Suspense>
   );
 }

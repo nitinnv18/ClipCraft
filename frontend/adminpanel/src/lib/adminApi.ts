@@ -14,7 +14,7 @@ import {
   SystemSettingsData,
 } from "@/types/admin";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
 
 class AdminApiClient {
   private getToken(): string | null {
@@ -47,11 +47,20 @@ class AdminApiClient {
     }
 
     const url = `${API_BASE}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`;
-    const res = await fetch(url, { ...options, headers });
+    const signal = options.signal || (typeof AbortSignal !== "undefined" && "timeout" in AbortSignal ? AbortSignal.timeout(15000) : undefined);
+    const res = await fetch(url, { ...options, headers, signal });
 
     if (!res.ok) {
       const errorBody = await res.json().catch(() => ({ detail: "An unexpected error occurred" }));
-      throw new Error(errorBody.detail || `Request failed with status ${res.status}`);
+      let errorMsg = `Request failed with status ${res.status}`;
+      if (typeof errorBody.detail === "string") {
+        errorMsg = errorBody.detail;
+      } else if (Array.isArray(errorBody.detail)) {
+        errorMsg = errorBody.detail.map((err: { msg?: string }) => err.msg || JSON.stringify(err)).join(", ");
+      } else if (errorBody.message) {
+        errorMsg = errorBody.message;
+      }
+      throw new Error(errorMsg);
     }
 
     return res.json();
@@ -122,7 +131,7 @@ class AdminApiClient {
   }
 
   // --- Jobs ---
-  async listJobs(params?: { search?: string; status?: string; stage?: string; page?: number; limit?: number }): Promise<{
+  async listJobs(params?: { search?: string; status?: string; stage?: string; mode?: string; page?: number; limit?: number }): Promise<{
     jobs: AdminJobRow[];
     total: number;
     page: number;
@@ -133,6 +142,7 @@ class AdminApiClient {
     if (params?.search) q.set("search", params.search);
     if (params?.status) q.set("status", params.status);
     if (params?.stage) q.set("stage", params.stage);
+    if (params?.mode) q.set("mode", params.mode);
     if (params?.page) q.set("page", params.page.toString());
     if (params?.limit) q.set("limit", params.limit.toString());
     return this.request(`/api/admin/jobs?${q.toString()}`);
@@ -150,6 +160,12 @@ class AdminApiClient {
 
   async cancelJob(jobId: string): Promise<{ message: string }> {
     return this.request(`/api/admin/jobs/${jobId}/cancel`, {
+      method: "POST",
+    });
+  }
+
+  async purgeStuckJobs(maxAgeMinutes: number = 20): Promise<{ message: string; reapedCount: number }> {
+    return this.request(`/api/admin/jobs/purge-stale?max_age_minutes=${maxAgeMinutes}`, {
       method: "POST",
     });
   }
@@ -182,7 +198,7 @@ class AdminApiClient {
   }
 
   async triggerCleanup(category: string = "all"): Promise<{ message: string; cleanedFormatted: string }> {
-    return this.request("/api/admin/storage/cleanup", {
+    return this.request(`/api/admin/storage/cleanup?category=${category}`, {
       method: "POST",
       body: JSON.stringify({ category }),
     });
@@ -206,12 +222,16 @@ class AdminApiClient {
     return this.request(`/api/admin/logs/system?${q.toString()}`);
   }
 
-  async getAuditLogs(params?: { action?: string; limit?: number }): Promise<{
+  async getAuditLogs(params?: { action?: string; page?: number; limit?: number }): Promise<{
     auditLogs: AuditLogEntry[];
+    total?: number;
+    page?: number;
+    pages?: number;
     count: number;
   }> {
     const q = new URLSearchParams();
     if (params?.action) q.set("action", params.action);
+    if (params?.page) q.set("page", params.page.toString());
     if (params?.limit) q.set("limit", params.limit.toString());
     return this.request(`/api/admin/logs/audit?${q.toString()}`);
   }
@@ -236,13 +256,6 @@ class AdminApiClient {
     return this.request<AdminUser>("/api/admin/settings/admins", {
       method: "POST",
       body: JSON.stringify(params),
-    });
-  }
-
-  async updateAdmin(adminId: string, updates: { role?: string; status?: string; name?: string }): Promise<AdminUser> {
-    return this.request<AdminUser>(`/api/admin/settings/admins/${adminId}`, {
-      method: "PATCH",
-      body: JSON.stringify(updates),
     });
   }
 }

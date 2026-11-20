@@ -1,7 +1,6 @@
-"use client";
 
 import React from "react";
-import { Mic, Video, GraduationCap, Users, UserCheck, Briefcase, User } from "lucide-react";
+import { Mic, PlaySquare, GraduationCap, Target, MessageSquareQuote, Workflow, Flame } from "lucide-react";
 
 export const UseCases: React.FC = () => {
   const useCases = [
@@ -12,7 +11,7 @@ export const UseCases: React.FC = () => {
       focus: "Audio/Video Podcasts",
     },
     {
-      icon: Video,
+      icon: PlaySquare,
       title: "YouTubers",
       description: "Repurpose long-form video archives into vertical Shorts to capture organic feed distribution.",
       focus: "YouTube Shorts Growth",
@@ -24,25 +23,25 @@ export const UseCases: React.FC = () => {
       focus: "Course Repurposing",
     },
     {
-      icon: UserCheck,
+      icon: Target,
       title: "Coaches",
       description: "Extract actionable advice, frameworks, and client insights from recorded consultation calls.",
       focus: "Consulting & Webinars",
     },
     {
-      icon: Users,
+      icon: MessageSquareQuote,
       title: "Interview Creators",
       description: "Clip the most impactful questions and candid guest revelations without scrubbing manually.",
       focus: "Interview Highlights",
     },
     {
-      icon: Briefcase,
+      icon: Workflow,
       title: "Content Teams",
       description: "Scale short-form output for brands and media companies without scaling editorial headcount.",
       focus: "Multi-Platform Publishing",
     },
     {
-      icon: User,
+      icon: Flame,
       title: "Personal Brands",
       description: "Maintain daily publishing presence across TikTok, Instagram Reels, and Shorts from one weekly recording.",
       focus: "Creator Repurposing",

@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
+import Script from "next/script";
 import "./globals.css";
 import { AuthProvider } from "@/context/AuthContext";
+import { VideoProcessingProvider } from "@/context/VideoProcessingContext";
 import { AppShell } from "@/components/AppShell";
 import { SmoothScrollProvider } from "@/components/SmoothScrollProvider";
 import { DesktopOnlyGuard } from "@/components/DesktopOnlyGuard";
@@ -46,32 +48,54 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // Read session cookie server-side to guarantee 0-blink SSR
+  // Read verified session server-side for 0-blink SSR directly from cookie (instant, 0ms network latency)
   const cookieStore = await cookies();
+  const token = cookieStore.get("clipcraft_token")?.value;
   const userCookie = cookieStore.get("clipcraft_user")?.value;
   let initialUser = null;
-  if (userCookie) {
+
+  if (token && userCookie) {
     try {
-      const decoded = Buffer.from(userCookie, "base64").toString("utf-8");
-      initialUser = JSON.parse(decoded);
-    } catch (_) {
-      try {
-        initialUser = JSON.parse(decodeURIComponent(userCookie));
-      } catch (_) {
-        try {
-          initialUser = JSON.parse(userCookie);
-        } catch (_) {}
-      }
+      initialUser = JSON.parse(decodeURIComponent(userCookie));
+    } catch {
+      initialUser = null;
     }
   }
+
+  const gaId = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID;
 
   return (
     <html lang="en" className="dark scroll-smooth">
       <body className="min-h-screen bg-[#0a0b0d] text-[#f3f4f6] flex flex-col antialiased selection:bg-amber-500 selection:text-black">
+        {/* Google Analytics 4 Tag (GA4) */}
+        {gaId && (
+          <>
+            <Script
+              strategy="afterInteractive"
+              src={`https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(gaId.replace(/[^a-zA-Z0-9_-]/g, ""))}`}
+            />
+            <Script
+              id="google-analytics"
+              strategy="afterInteractive"
+              dangerouslySetInnerHTML={{
+                __html: `
+                  window.dataLayer = window.dataLayer || [];
+                  function gtag(){dataLayer.push(arguments);}
+                  gtag('js', new Date());
+                  gtag('config', '${gaId.replace(/[^a-zA-Z0-9_-]/g, "")}', {
+                    page_path: window.location.pathname,
+                  });
+                `,
+              }}
+            />
+          </>
+        )}
         <DesktopOnlyGuard>
           <SmoothScrollProvider>
             <AuthProvider initialUser={initialUser}>
-              <AppShell>{children}</AppShell>
+              <VideoProcessingProvider>
+                <AppShell>{children}</AppShell>
+              </VideoProcessingProvider>
             </AuthProvider>
           </SmoothScrollProvider>
         </DesktopOnlyGuard>

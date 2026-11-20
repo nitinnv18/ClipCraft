@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { ChevronDown, HelpCircle } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 
 interface FAQItem {
   question: string;
@@ -16,7 +16,7 @@ export const FAQ: React.FC = () => {
     {
       question: "What videos can I use?",
       answer:
-        "You can provide any public YouTube video URL containing spoken dialogue, such as podcasts, interviews, presentations, lectures, and educational breakdowns. The AI processes the audio and transcript to locate peak moments.",
+        "You can upload any video file (.mp4, .mov, .webm) containing spoken dialogue, such as podcasts, interviews, presentations, lectures, and educational breakdowns. The AI processes the audio and transcript to locate peak moments.",
       category: "Supported Input",
     },
     {

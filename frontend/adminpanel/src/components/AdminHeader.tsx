@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useAdminAuth } from "@/context/AdminAuthContext";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/Button";
-import { LogOut, Activity, Menu } from "lucide-react";
+import { LogOut, Menu } from "lucide-react";
 import { adminApi } from "@/lib/adminApi";
 
 export const AdminHeader: React.FC<{ onToggleMobile?: () => void }> = ({ onToggleMobile }) => {
@@ -28,7 +28,6 @@ export const AdminHeader: React.FC<{ onToggleMobile?: () => void }> = ({ onToggl
     if (pathname.startsWith("/clips")) return "Generated Clips Library";
     if (pathname.startsWith("/storage")) return "Media & Storage Cleanup";
     if (pathname.startsWith("/system")) return "System Health & Diagnostics";
-    if (pathname.startsWith("/logs")) return "System Application Logs";
     if (pathname.startsWith("/audit-logs")) return "Administrative Audit Trail";
     if (pathname.startsWith("/settings")) return "Global Settings & Access Control";
     return "Admin Portal";

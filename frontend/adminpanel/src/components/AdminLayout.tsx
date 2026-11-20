@@ -13,13 +13,13 @@ export const AdminLayout: React.FC<{ children: React.ReactNode }> = ({ children 
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
 
   useEffect(() => {
-    if (!isLoading && !admin && pathname !== "/login" && pathname !== "/login") {
+    if (!isLoading && !admin && pathname !== "/login") {
       router.push("/login");
     }
   }, [admin, isLoading, pathname, router]);
 
   // If on login page, just show content without sidebar
-  if (pathname === "/login" || pathname === "/login") {
+  if (pathname === "/login") {
     return <div className="min-h-screen bg-[#0a0b0d] text-white flex flex-col">{children}</div>;
   }
 

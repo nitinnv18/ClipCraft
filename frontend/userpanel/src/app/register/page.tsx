@@ -41,10 +41,9 @@ export default function RegisterPage() {
     try {
       const res = await api.register(email, password);
       login(res.access_token, res.user);
-      router.push("/");
-    } catch (err: any) {
-      setError(err.message || "Failed to create account.");
-    } finally {
+      window.location.href = "/dashboard";
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to create account.");
       setIsLoading(false);
     }
   };
@@ -53,15 +52,15 @@ export default function RegisterPage() {
     <div className="flex-1 flex items-center justify-center py-12">
       <div className="w-full max-w-md">
         <Card className="border-[#2b2e36] bg-[#121316] p-8">
-          <div className="flex items-center gap-2.5 mb-6 border-b border-[#22252c] pb-4">
-            <div className="w-8 h-8 bg-amber-500 text-black flex items-center justify-center font-bold flex-shrink-0">
-              <UserPlus className="w-4 h-4" />
+          <div className="flex items-center gap-4 mb-6 border-b border-[#22252c] pb-5">
+            <div className="w-12 h-12 bg-amber-500 text-black flex items-center justify-center font-bold flex-shrink-0 rounded shadow-[0_0_20px_rgba(245,158,11,0.25)]">
+              <UserPlus className="w-6 h-6 stroke-[2.2]" />
             </div>
             <div>
-              <h1 className="text-sm font-bold uppercase tracking-wider text-white">
+              <h1 className="text-xl font-black uppercase tracking-tight text-white">
                 Create Account
               </h1>
-              <p className="text-xs text-gray-400">Start generating high-retention clips</p>
+              <p className="text-xs text-gray-400 mt-0.5">Start generating high-retention clips</p>
             </div>
           </div>
 

@@ -38,10 +38,22 @@ function LoginForm() {
     try {
       const res = await api.login(email, password);
       login(res.access_token, res.user);
-      router.push("/");
-    } catch (err: any) {
-      setError(err.message || "Invalid email or password.");
-    } finally {
+      const redirectPath = searchParams.get("redirect") || "/dashboard";
+      const ALLOWED_PREFIXES = ["/dashboard", "/history", "/jobs"];
+      const isClean =
+        !redirectPath.includes("//") &&
+        !redirectPath.includes("/\\") &&
+        !redirectPath.includes("\\") &&
+        ALLOWED_PREFIXES.some(
+          (prefix) =>
+            redirectPath === prefix ||
+            redirectPath.startsWith(`${prefix}/`) ||
+            redirectPath.startsWith(`${prefix}?`)
+        );
+      const safeRedirect = isClean ? redirectPath : "/dashboard";
+      window.location.href = safeRedirect;
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Invalid email or password.");
       setIsLoading(false);
     }
   };
@@ -50,15 +62,15 @@ function LoginForm() {
     <div className="flex-1 flex items-center justify-center py-12">
       <div className="w-full max-w-md">
         <Card className="border-[#2b2e36] bg-[#121316] p-8">
-          <div className="flex items-center gap-2.5 mb-6 border-b border-[#22252c] pb-4">
-            <div className="w-8 h-8 bg-amber-500 text-black flex items-center justify-center font-bold flex-shrink-0">
-              <Lock className="w-4 h-4" />
+          <div className="flex items-center gap-4 mb-6 border-b border-[#22252c] pb-5">
+            <div className="w-12 h-12 bg-amber-500 text-black flex items-center justify-center font-bold flex-shrink-0 rounded shadow-[0_0_20px_rgba(245,158,11,0.25)]">
+              <Lock className="w-6 h-6 stroke-[2.2]" />
             </div>
             <div>
-              <h1 className="text-sm font-bold uppercase tracking-wider text-white">
+              <h1 className="text-xl font-black uppercase tracking-tight text-white">
                 Sign In to Clip<span className="text-amber-500">Craft</span>
               </h1>
-              <p className="text-xs text-gray-400">Enter your credentials to continue</p>
+              <p className="text-xs text-gray-400 mt-0.5">Enter your credentials to continue to your workspace</p>
             </div>
           </div>
 

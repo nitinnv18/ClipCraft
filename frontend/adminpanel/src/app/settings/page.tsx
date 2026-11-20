@@ -2,21 +2,18 @@
 
 import React, { useEffect, useState } from "react";
 import { adminApi } from "@/lib/adminApi";
+import { logger } from "@/lib/logger";
 import { SystemSettingsData, AdminUser, AdminRole } from "@/types/admin";
 import { useAdminAuth } from "@/context/AdminAuthContext";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/Input";
+import { formatDate, formatDateTime } from "@/lib/utils";
 import {
-  Settings,
-  Shield,
-  Users,
-  HardDrive,
-  Cpu,
   Save,
   CheckCircle2,
   AlertTriangle,
   UserPlus,
+  ChevronDown,
 } from "lucide-react";
 
 export default function AdminSettingsPage() {
@@ -28,6 +25,7 @@ export default function AdminSettingsPage() {
   const [activeTab, setActiveTab] = useState<"general" | "limits" | "processing" | "admins">("general");
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // New Admin Form Modal
   const [showCreateAdmin, setShowCreateAdmin] = useState(false);
@@ -37,6 +35,7 @@ export default function AdminSettingsPage() {
   const [createAdminLoading, setCreateAdminLoading] = useState(false);
 
   const loadData = async () => {
+    setError(null);
     try {
       const s = await adminApi.getSettings();
       setSettings(s);
@@ -45,7 +44,8 @@ export default function AdminSettingsPage() {
         setAdmins(a);
       }
     } catch (err) {
-      console.error(err);
+      logger.error("Failed to load settings data", err);
+      setError(err instanceof Error ? err.message : "Failed to load settings from server.");
     }
   };
 
@@ -64,8 +64,8 @@ export default function AdminSettingsPage() {
       setSettings(updated);
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 4000);
-    } catch (err: any) {
-      alert(err.message || "Failed to update settings.");
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Failed to update settings.");
     } finally {
       setIsSaving(false);
     }
@@ -84,14 +84,24 @@ export default function AdminSettingsPage() {
       setNewAdminEmail("");
       setNewAdminPassword("");
       loadData();
-    } catch (err: any) {
-      alert(err.message || "Failed to create administrator.");
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Failed to create administrator.");
     } finally {
       setCreateAdminLoading(false);
     }
   };
 
   if (!settings) {
+    if (error) {
+      return (
+        <div className="p-12 text-center text-xs font-mono text-red-400 bg-[#121316] border border-[#272a30] flex flex-col items-center gap-3">
+          <span>{error}</span>
+          <Button variant="outline" size="sm" onClick={loadData}>
+            Retry Loading Settings
+          </Button>
+        </div>
+      );
+    }
     return <div className="p-12 text-center text-xs font-mono text-gray-400">Loading settings...</div>;
   }
 
@@ -377,15 +387,18 @@ export default function AdminSettingsPage() {
                   className="bg-[#121316] border border-[#30333d] px-3 py-2 text-xs font-mono text-white"
                   required
                 />
-                <select
-                  value={newAdminRole}
-                  onChange={(e) => setNewAdminRole(e.target.value as any)}
-                  className="bg-[#121316] border border-[#30333d] px-3 py-2 text-xs font-mono uppercase text-white"
-                >
-                  <option value="ADMIN">ADMIN</option>
-                  <option value="SUPPORT">SUPPORT</option>
-                  <option value="SUPER_ADMIN">SUPER_ADMIN</option>
-                </select>
+                <div className="relative">
+                  <select
+                    value={newAdminRole}
+                    onChange={(e) => setNewAdminRole(e.target.value as "ADMIN" | "SUPPORT" | "SUPER_ADMIN")}
+                    className="w-full bg-[#121316] border border-[#30333d] pl-3 pr-8 py-2 text-xs font-mono uppercase text-white appearance-none cursor-pointer focus:outline-none focus:border-amber-500"
+                  >
+                    <option value="ADMIN">ADMIN</option>
+                    <option value="SUPPORT">SUPPORT</option>
+                    <option value="SUPER_ADMIN">SUPER_ADMIN</option>
+                  </select>
+                  <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
 
                 <div className="sm:col-span-3 flex items-center justify-end gap-2 pt-2">
                   <Button variant="outline" size="sm" type="button" onClick={() => setShowCreateAdmin(false)}>
@@ -422,10 +435,10 @@ export default function AdminSettingsPage() {
                       <StatusBadge status={a.status} />
                     </td>
                     <td className="py-2.5 text-gray-400 text-[11px]">
-                      {new Date(a.createdAt).toLocaleDateString()}
+                      {formatDate(a.createdAt)}
                     </td>
                     <td className="py-2.5 text-gray-400 text-[11px]">
-                      {a.lastLoginAt ? new Date(a.lastLoginAt).toLocaleString() : "—"}
+                      {a.lastLoginAt ? formatDateTime(a.lastLoginAt) : "—"}
                     </td>
                   </tr>
                 ))}

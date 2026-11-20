@@ -2,7 +2,7 @@ import React from "react";
 import { cn } from "@/lib/utils";
 
 interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
-  variant?: "queued" | "processing" | "completed" | "failed" | "neutral" | "score";
+  variant?: "queued" | "processing" | "completed" | "failed" | "cancelled" | "neutral" | "score";
 }
 
 export const Badge: React.FC<BadgeProps> = ({
@@ -16,6 +16,7 @@ export const Badge: React.FC<BadgeProps> = ({
     processing: "bg-amber-950 text-amber-300 border border-amber-600",
     completed: "bg-emerald-950 text-emerald-300 border border-emerald-600",
     failed: "bg-rose-950 text-rose-300 border border-rose-600",
+    cancelled: "bg-[#181a1e] text-gray-400 border border-[#2b2e36]",
     neutral: "bg-[#181a1e] text-gray-400 border border-[#2b2e36]",
     score: "bg-white text-black font-bold border border-white",
   };

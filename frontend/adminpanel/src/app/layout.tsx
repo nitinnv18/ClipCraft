@@ -1,13 +1,11 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { cookies } from "next/headers";
-import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { AdminAuthProvider } from "@/context/AdminAuthContext";
 import { AdminLayout } from "@/components/AdminLayout";
 import { DesktopOnlyGuard } from "@/components/DesktopOnlyGuard";
-
-const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
-const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono" });
+import { AdminProgressBar } from "@/components/AdminProgressBar";
 
 export const metadata: Metadata = {
   title: "ClipCraft Admin Console",
@@ -22,37 +20,41 @@ export const metadata: Metadata = {
   },
 };
 
+function parseAdminCookie(val?: string) {
+  if (!val) return null;
+  try {
+    const json = Buffer.from(val, "base64").toString("utf-8");
+    return JSON.parse(json);
+  } catch (_) {}
+  try {
+    return JSON.parse(decodeURIComponent(val));
+  } catch (_) {}
+  try {
+    return JSON.parse(val);
+  } catch (_) {}
+  return null;
+}
+
 export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
   const cookieStore = await cookies();
-  const adminCookie = cookieStore.get("clipcraft_admin_user")?.value;
-  let initialAdmin = null;
-  if (adminCookie) {
-    try {
-      const decoded = Buffer.from(adminCookie, "base64").toString("utf-8");
-      initialAdmin = JSON.parse(decoded);
-    } catch (_) {
-      try {
-        initialAdmin = JSON.parse(decodeURIComponent(adminCookie));
-      } catch (_) {
-        try {
-          initialAdmin = JSON.parse(adminCookie);
-        } catch (_) {}
-      }
-    }
-  }
+  const userCookie = cookieStore.get("clipcraft_admin_user")?.value;
+  const initialAdmin = parseAdminCookie(userCookie);
 
   return (
-    <html lang="en" className={`${inter.variable} ${mono.variable} dark`}>
+    <html lang="en" className="dark">
       <head>
         <link rel="icon" href="/admin-icon.svg?v=3" type="image/svg+xml" />
         <link rel="shortcut icon" href="/admin-icon.svg?v=3" type="image/svg+xml" />
         <link rel="apple-touch-icon" href="/admin-icon.svg?v=3" />
       </head>
       <body className="bg-[#0a0b0d] text-[#f3f4f6] font-sans antialiased min-h-screen flex flex-col selection:bg-red-600 selection:text-white">
+        <Suspense fallback={null}>
+          <AdminProgressBar />
+        </Suspense>
         <DesktopOnlyGuard>
           <AdminAuthProvider initialAdmin={initialAdmin}>
             <AdminLayout>{children}</AdminLayout>

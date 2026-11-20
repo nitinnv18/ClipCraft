@@ -1,8 +1,8 @@
 import os
 import shutil
-from typing import Dict, Any, Optional
+import asyncio
+from typing import Dict, Any
 import cloudinary
-import cloudinary.uploader
 from app.core.config import settings
 from app.core.logging import logger
 from app.providers.base import BaseStorageProvider
@@ -29,7 +29,7 @@ class CloudinaryStorageProvider(BaseStorageProvider):
             os.makedirs(os.path.join(settings.TEMP_STORAGE_DIR, "public_media", "clips"), exist_ok=True)
             os.makedirs(os.path.join(settings.TEMP_STORAGE_DIR, "public_media", "thumbnails"), exist_ok=True)
 
-    async def upload_video(self, local_file_path: str, public_id_prefix: str = "clips") -> Dict[str, Any]:
+    async def upload_video(self, local_file_path: str, public_id_prefix: str = "clips", force_local: bool = False) -> Dict[str, Any]:
         if not os.path.exists(local_file_path):
             raise FileNotFoundError(f"Local video file not found: {local_file_path}")
 
@@ -37,10 +37,12 @@ class CloudinaryStorageProvider(BaseStorageProvider):
         base_id = os.path.splitext(file_name)[0]
         public_id = f"ai-video-clipper/{public_id_prefix}/{base_id}"
 
-        if self.is_configured:
+        if self.is_configured and not force_local:
             try:
+                import cloudinary.uploader
                 logger.info(f"Uploading video {local_file_path} to Cloudinary as {public_id}...")
-                result = cloudinary.uploader.upload_large(
+                result = await asyncio.to_thread(
+                    cloudinary.uploader.upload_large,
                     local_file_path,
                     resource_type="video",
                     public_id=public_id,
@@ -61,7 +63,7 @@ class CloudinaryStorageProvider(BaseStorageProvider):
         public_dir = os.path.join(settings.TEMP_STORAGE_DIR, "public_media", public_id_prefix)
         os.makedirs(public_dir, exist_ok=True)
         dest_path = os.path.join(public_dir, file_name)
-        shutil.copyfile(local_file_path, dest_path)
+        await asyncio.to_thread(shutil.copyfile, local_file_path, dest_path)
         
         url = f"/api/media/{public_id_prefix}/{file_name}"
         return {
@@ -72,7 +74,7 @@ class CloudinaryStorageProvider(BaseStorageProvider):
             "bytes": os.path.getsize(dest_path)
         }
 
-    async def upload_image(self, local_file_path: str, public_id_prefix: str = "thumbnails") -> Dict[str, Any]:
+    async def upload_image(self, local_file_path: str, public_id_prefix: str = "thumbnails", force_local: bool = False) -> Dict[str, Any]:
         if not os.path.exists(local_file_path):
             raise FileNotFoundError(f"Local image file not found: {local_file_path}")
 
@@ -80,10 +82,12 @@ class CloudinaryStorageProvider(BaseStorageProvider):
         base_id = os.path.splitext(file_name)[0]
         public_id = f"ai-video-clipper/{public_id_prefix}/{base_id}"
 
-        if self.is_configured:
+        if self.is_configured and not force_local:
             try:
+                import cloudinary.uploader
                 logger.info(f"Uploading thumbnail {local_file_path} to Cloudinary as {public_id}...")
-                result = cloudinary.uploader.upload(
+                result = await asyncio.to_thread(
+                    cloudinary.uploader.upload,
                     local_file_path,
                     resource_type="image",
                     public_id=public_id,
@@ -100,7 +104,7 @@ class CloudinaryStorageProvider(BaseStorageProvider):
         public_dir = os.path.join(settings.TEMP_STORAGE_DIR, "public_media", public_id_prefix)
         os.makedirs(public_dir, exist_ok=True)
         dest_path = os.path.join(public_dir, file_name)
-        shutil.copyfile(local_file_path, dest_path)
+        await asyncio.to_thread(shutil.copyfile, local_file_path, dest_path)
 
         url = f"/api/media/{public_id_prefix}/{file_name}"
         return {
@@ -111,9 +115,12 @@ class CloudinaryStorageProvider(BaseStorageProvider):
     async def delete_file(self, public_id: str) -> bool:
         if self.is_configured:
             try:
-                cloudinary.uploader.destroy(public_id)
+                import cloudinary.uploader
+                await asyncio.to_thread(cloudinary.uploader.destroy, public_id)
                 return True
             except Exception as e:
                 logger.error(f"Cloudinary delete failed: {e}")
                 return False
         return True
+
+cloudinary_provider = CloudinaryStorageProvider()

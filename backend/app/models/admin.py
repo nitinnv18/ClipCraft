@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
-from typing import Optional, List
-from pydantic import BaseModel, EmailStr, Field, ConfigDict
+from typing import Optional
+from pydantic import BaseModel, EmailStr, Field
 
 class AdminRole(str, Enum):
     SUPER_ADMIN = "SUPER_ADMIN"
@@ -18,27 +18,17 @@ class AdminBase(BaseModel):
     role: AdminRole = AdminRole.ADMIN
 
 class AdminCreate(AdminBase):
-    password: str = Field(..., min_length=8)
+    password: str = Field(..., min_length=8, max_length=72)
 
 class AdminUpdate(BaseModel):
     name: Optional[str] = None
     role: Optional[AdminRole] = None
     status: Optional[AdminStatus] = None
-    password: Optional[str] = Field(None, min_length=8)
+    password: Optional[str] = Field(None, min_length=8, max_length=72)
 
 class AdminLogin(BaseModel):
     email: EmailStr
-    password: str
-
-class AdminInDB(AdminBase):
-    id: str = Field(alias="_id")
-    passwordHash: str
-    status: AdminStatus = AdminStatus.ACTIVE
-    lastLoginAt: Optional[datetime] = None
-    createdAt: datetime = Field(default_factory=datetime.utcnow)
-    updatedAt: datetime = Field(default_factory=datetime.utcnow)
-
-    model_config = ConfigDict(populate_by_name=True)
+    password: str = Field(..., min_length=1, max_length=72)
 
 class AdminResponse(AdminBase):
     id: str

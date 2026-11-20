@@ -1,22 +1,33 @@
+import re
 import uuid
 from datetime import datetime
-from typing import Optional, List, Dict, Any
-from fastapi import APIRouter, HTTPException, Depends, Query, BackgroundTasks, status
+from typing import Optional, Dict, Any
+from fastapi import APIRouter, HTTPException, Depends, Query, BackgroundTasks
 from app.db.mongodb import get_database
 from app.db.memory_store import memory_store
 from app.models.admin import AdminResponse, AdminRole
-from app.api.admin.auth import get_current_admin
-from app.workers.video_worker import worker_instance
+from app.api.admin.auth import get_current_admin, require_roles
 from app.queue.redis_queue import queue_instance
+from app.workers.video_worker import worker_instance
 from app.core.logging import logger
+from app.core.utils import format_iso_utc
 
 router = APIRouter(prefix="/jobs", tags=["Admin Jobs"])
+
+def is_client_rendered_job(job_doc: Dict[str, Any]) -> bool:
+    """Canonical predicate for detecting client-side/on-device rendered jobs."""
+    return bool(
+        job_doc.get("videoId") == "client_render"
+        or job_doc.get("channel") == "Local Device"
+        or job_doc.get("renderMode") == "client"
+    )
 
 @router.get("")
 async def list_admin_jobs(
     search: Optional[str] = Query(None, description="Search by Job ID, Video Title or YouTube URL"),
     status_filter: Optional[str] = Query(None, alias="status"),
     stage_filter: Optional[str] = Query(None, alias="stage"),
+    mode_filter: Optional[str] = Query(None, alias="mode", description="Filter by mode: 'cloud' or 'on-device'"),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     current_admin: AdminResponse = Depends(get_current_admin)
@@ -27,18 +38,36 @@ async def list_admin_jobs(
     # ── MongoDB path: native pagination ──────────────────────────────────────
     if db is not None:
         try:
-            query: Dict[str, Any] = {}
+            and_conditions = []
             if status_filter:
-                query["status"] = status_filter.lower().strip()
+                and_conditions.append({"status": status_filter.lower().strip()})
             if stage_filter:
-                query["stage"] = stage_filter.lower().strip()
+                and_conditions.append({"stage": stage_filter.lower().strip()})
+            if mode_filter:
+                m = mode_filter.lower().strip()
+                if m in ("on-device", "client", "local"):
+                    and_conditions.append({
+                        "$or": [
+                            {"videoId": "client_render"},
+                            {"channel": "Local Device"},
+                            {"renderMode": "client"}
+                        ]
+                    })
+                elif m == "cloud":
+                    and_conditions.append({"videoId": {"$ne": "client_render"}})
+                    and_conditions.append({"channel": {"$ne": "Local Device"}})
+                    and_conditions.append({"renderMode": {"$ne": "client"}})
             if search:
-                s = search.strip()
-                query["$or"] = [
-                    {"_id": {"$regex": s, "$options": "i"}},
-                    {"title": {"$regex": s, "$options": "i"}},
-                    {"youtubeUrl": {"$regex": s, "$options": "i"}},
-                ]
+                s = re.escape(search.strip())
+                and_conditions.append({
+                    "$or": [
+                        {"_id": {"$regex": s, "$options": "i"}},
+                        {"title": {"$regex": s, "$options": "i"}},
+                        {"youtubeUrl": {"$regex": s, "$options": "i"}},
+                    ]
+                })
+
+            query = {"$and": and_conditions} if and_conditions else {}
 
             total = await db.jobs.count_documents(query)
             page_jobs = await db.jobs.find(query).sort("createdAt", -1).skip(skip).limit(limit).to_list(limit)
@@ -52,21 +81,28 @@ async def list_admin_jobs(
 
             rows = []
             for j in page_jobs:
-                jid = str(j.get("_id"))
+                jid = str(j.get("_id") or j.get("id"))
                 uid = str(j.get("userId", ""))
+                st_val = j.get("status", "queued")
+                st_clean = st_val.value if hasattr(st_val, "value") else str(st_val)
+                stg_val = j.get("stage", "initializing")
+                stg_clean = stg_val.value if hasattr(stg_val, "value") else str(stg_val)
+                is_client = is_client_rendered_job(j)
                 rows.append({
                     "id": jid,
                     "userId": uid,
-                    "userEmail": user_email_map.get(uid, "unknown"),
+                    "userEmail": j.get("userEmail") or user_email_map.get(uid, "unknown"),
                     "title": j.get("title", "Untitled Job"),
                     "youtubeUrl": j.get("youtubeUrl", ""),
-                    "status": j.get("status", "queued"),
-                    "stage": j.get("stage", "initializing"),
+                    "status": st_clean,
+                    "stage": stg_clean,
                     "progress": j.get("progress", 0),
                     "clipCount": j.get("clipCount", 0),
                     "duration": j.get("duration", 0),
-                    "createdAt": str(j.get("createdAt", "")),
-                    "completedAt": str(j.get("completedAt", "")) if j.get("completedAt") else None,
+                    "processingMode": "on-device" if is_client else "cloud",
+                    "isClientRendered": is_client,
+                    "createdAt": format_iso_utc(j.get("createdAt")),
+                    "completedAt": format_iso_utc(j.get("completedAt")),
                     "error": j.get("error")
                 })
 
@@ -100,6 +136,12 @@ async def list_admin_jobs(
         filtered = [j for j in filtered if str(j.get("status", "")).lower() == status_filter.lower().strip()]
     if stage_filter:
         filtered = [j for j in filtered if str(j.get("stage", "")).lower() == stage_filter.lower().strip()]
+    if mode_filter:
+        m = mode_filter.lower().strip()
+        if m in ("on-device", "client", "local"):
+            filtered = [j for j in filtered if is_client_rendered_job(j)]
+        elif m == "cloud":
+            filtered = [j for j in filtered if not is_client_rendered_job(j)]
 
     filtered.sort(key=lambda x: str(x.get("createdAt", "")), reverse=True)
     total = len(filtered)
@@ -109,19 +151,26 @@ async def list_admin_jobs(
     for j in page_jobs:
         jid = str(j.get("id") or j.get("_id"))
         uid = str(j.get("userId", ""))
+        st_val = j.get("status", "queued")
+        st_clean = st_val.value if hasattr(st_val, "value") else str(st_val)
+        stg_val = j.get("stage", "initializing")
+        stg_clean = stg_val.value if hasattr(stg_val, "value") else str(stg_val)
+        is_client = is_client_rendered_job(j)
         rows.append({
             "id": jid,
             "userId": uid,
-            "userEmail": user_map.get(uid, "unknown"),
+            "userEmail": j.get("userEmail") or user_map.get(uid, "unknown"),
             "title": j.get("title", "Untitled Job"),
             "youtubeUrl": j.get("youtubeUrl", ""),
-            "status": j.get("status", "queued"),
-            "stage": j.get("stage", "initializing"),
+            "status": st_clean,
+            "stage": stg_clean,
             "progress": j.get("progress", 0),
             "clipCount": j.get("clipCount", 0),
             "duration": j.get("duration", 0),
-            "createdAt": str(j.get("createdAt", "")),
-            "completedAt": str(j.get("completedAt", "")) if j.get("completedAt") else None,
+            "processingMode": "on-device" if is_client else "cloud",
+            "isClientRendered": is_client,
+            "createdAt": format_iso_utc(j.get("createdAt")),
+            "completedAt": format_iso_utc(j.get("completedAt")),
             "error": j.get("error")
         })
 
@@ -186,19 +235,25 @@ async def get_admin_job_detail(job_id: str, current_admin: AdminResponse = Depen
 
     # Synthesize Job Logs
     logs = [
-        {"timestamp": str(job_doc.get("createdAt")), "message": "Job registered in queue dispatch."},
-        {"timestamp": str(job_doc.get("startedAt") or job_doc.get("createdAt")), "message": "Worker thread acquired video metadata."}
+        {"timestamp": format_iso_utc(job_doc.get("createdAt")), "message": "Job registered in queue dispatch."},
+        {"timestamp": format_iso_utc(job_doc.get("startedAt") or job_doc.get("createdAt")), "message": "Worker thread acquired video metadata."}
     ]
     if job_doc.get("progress", 0) >= 35 or job_doc.get("status") == "completed":
-        logs.append({"timestamp": str(job_doc.get("startedAt") or job_doc.get("createdAt")), "message": "Audio stream parsed with fast transcription model."})
+        logs.append({"timestamp": format_iso_utc(job_doc.get("startedAt") or job_doc.get("createdAt")), "message": "Audio stream parsed with fast transcription model."})
     if job_doc.get("progress", 0) >= 60 or job_doc.get("status") == "completed":
-        logs.append({"timestamp": str(job_doc.get("startedAt") or job_doc.get("createdAt")), "message": "Google Gemini AI identified peak retention moment boundaries."})
+        logs.append({"timestamp": format_iso_utc(job_doc.get("startedAt") or job_doc.get("createdAt")), "message": "Groq AI identified peak retention moment boundaries."})
     if job_doc.get("progress", 0) >= 90 or job_doc.get("status") == "completed":
-        logs.append({"timestamp": str(job_doc.get("startedAt") or job_doc.get("createdAt")), "message": f"FFmpeg rendered {len(clips)} vertical short clips with burned subtitles."})
+        logs.append({"timestamp": format_iso_utc(job_doc.get("startedAt") or job_doc.get("createdAt")), "message": f"FFmpeg rendered {len(clips)} vertical short clips with burned subtitles."})
     if job_doc.get("status") == "completed":
-        logs.append({"timestamp": str(job_doc.get("completedAt")), "message": "Job finished successfully."})
+        logs.append({"timestamp": format_iso_utc(job_doc.get("completedAt")), "message": "Job finished successfully."})
     if job_doc.get("error"):
-        logs.append({"timestamp": str(job_doc.get("updatedAt") or job_doc.get("createdAt")), "message": f"ERROR: {job_doc.get('error')}"})
+        logs.append({"timestamp": format_iso_utc(job_doc.get("updatedAt") or job_doc.get("createdAt")), "message": f"ERROR: {job_doc.get('error')}"})
+
+    is_client = (
+        job_doc.get("videoId") == "client_render"
+        or job_doc.get("channel") == "Local Device"
+        or job_doc.get("renderMode") == "client"
+    )
 
     return {
         "job": {
@@ -214,10 +269,12 @@ async def get_admin_job_detail(job_id: str, current_admin: AdminResponse = Depen
             "stage": job_doc.get("stage", "initializing"),
             "progress": job_doc.get("progress", 0),
             "clipCount": job_doc.get("clipCount", 0),
+            "processingMode": "on-device" if is_client else "cloud",
+            "isClientRendered": is_client,
             "settings": job_doc.get("settings", {}),
-            "createdAt": str(job_doc.get("createdAt", "")),
-            "startedAt": str(job_doc.get("startedAt", "")) if job_doc.get("startedAt") else None,
-            "completedAt": str(job_doc.get("completedAt", "")) if job_doc.get("completedAt") else None,
+            "createdAt": format_iso_utc(job_doc.get("createdAt")),
+            "startedAt": format_iso_utc(job_doc.get("startedAt")),
+            "completedAt": format_iso_utc(job_doc.get("completedAt")),
             "error": job_doc.get("error")
         },
         "stages": stages,
@@ -243,7 +300,7 @@ async def get_admin_job_detail(job_id: str, current_admin: AdminResponse = Depen
 async def retry_job(
     job_id: str,
     background_tasks: BackgroundTasks,
-    current_admin: AdminResponse = Depends(get_current_admin)
+    current_admin: AdminResponse = Depends(require_roles([AdminRole.SUPER_ADMIN, AdminRole.ADMIN]))
 ):
     db = get_database()
     job_doc = memory_store.get_job(job_id)
@@ -255,6 +312,29 @@ async def retry_job(
 
     if not job_doc:
         raise HTTPException(status_code=404, detail="Job not found.")
+
+    raw_settings = job_doc.get("settings")
+    if hasattr(raw_settings, "model_dump"):
+        settings_dict = raw_settings.model_dump()
+    elif hasattr(raw_settings, "dict"):
+        settings_dict = raw_settings.dict()
+    elif isinstance(raw_settings, dict):
+        settings_dict = raw_settings
+    else:
+        settings_dict = {}
+
+    youtube_url = job_doc.get("youtubeUrl")
+    source_video_path = job_doc.get("sourceVideoPath")
+    source_type = job_doc.get("sourceType", "youtube")
+    is_client_rendered = job_doc.get("videoId") == "client_render" or job_doc.get("channel") == "Local Device"
+
+    # Client-rendered jobs only send audio to the server for planning; the raw video is never uploaded.
+    # Therefore, the server cannot re-render client jobs.
+    if is_client_rendered or (not youtube_url and not source_video_path):
+        raise HTTPException(
+            status_code=400,
+            detail="Client-rendered jobs cannot be retried on the server because the raw video remained on the user's local device."
+        )
 
     now = datetime.utcnow()
     reset_data = {
@@ -274,16 +354,15 @@ async def retry_job(
         except Exception:
             pass
 
-    # Launch worker — reconstruct full payload from job_doc so the worker
-    # has everything it needs (youtubeUrl, clipCount, settings, etc.).
-    # Previously this was called with only job_id, causing a silent crash.
-    settings_dict = job_doc.get("settings") or {}
+    # Launch worker — reconstruct full payload from job_doc
     payload = {
         "jobId": job_id,
         "userId": job_doc.get("userId"),
-        "youtubeUrl": job_doc.get("youtubeUrl"),
+        "youtubeUrl": youtube_url,
         "videoId": job_doc.get("videoId"),
-        "clipCount": job_doc.get("clipCount", settings_dict.get("clipCount", 5)),
+        "sourceType": source_type,
+        "sourceVideoPath": source_video_path,
+        "clipCount": job_doc.get("clipCount") or settings_dict.get("clipCount", 5),
         "minDuration": settings_dict.get("minDuration", 15),
         "maxDuration": settings_dict.get("maxDuration", 60),
         "format": settings_dict.get("format", "mp4"),
@@ -291,7 +370,10 @@ async def retry_job(
         "saveToCloud": settings_dict.get("saveToCloud", True),
         "estimatedSeconds": job_doc.get("estimatedSeconds", 60),
     }
-    background_tasks.add_task(worker_instance.process_job, job_id, payload)
+    if queue_instance.is_connected:
+        await queue_instance.enqueue_job(job_id, payload)
+    else:
+        background_tasks.add_task(worker_instance.process_job, job_id, payload)
 
     # Record Audit
     memory_store.add_audit_log({
@@ -311,7 +393,7 @@ async def retry_job(
 @router.post("/{job_id}/cancel")
 async def cancel_job(
     job_id: str,
-    current_admin: AdminResponse = Depends(get_current_admin)
+    current_admin: AdminResponse = Depends(require_roles([AdminRole.SUPER_ADMIN, AdminRole.ADMIN]))
 ):
     db = get_database()
     now = datetime.utcnow()
@@ -344,3 +426,71 @@ async def cancel_job(
 
     logger.info(f"Job {job_id} cancelled by Admin {current_admin.email}")
     return {"message": "Job cancelled.", "jobId": job_id, "status": "cancelled"}
+
+@router.post("/purge-stale")
+async def purge_stale_jobs(
+    max_age_minutes: int = Query(20, ge=1, le=1440, description="Age in minutes past which stuck jobs are marked failed"),
+    current_admin: AdminResponse = Depends(require_roles([AdminRole.SUPER_ADMIN, AdminRole.ADMIN]))
+):
+    """Admin tool to immediately sweep and mark all zombie/stuck jobs as failed."""
+    from datetime import datetime, timedelta
+    cutoff = datetime.utcnow() - timedelta(minutes=max_age_minutes)
+    stuck_statuses = ["queued", "processing", "fetching", "transcribing", "analyzing", "rendering", "uploading"]
+    db = get_database()
+    reaped_count = 0
+
+    if db is not None:
+        try:
+            res = await db.jobs.update_many(
+                {
+                    "status": {"$in": stuck_statuses},
+                    "$or": [
+                        {"updatedAt": {"$lt": cutoff}},
+                        {"updatedAt": {"$exists": False}, "createdAt": {"$lt": cutoff}},
+                        {"updatedAt": None, "createdAt": {"$lt": cutoff}}
+                    ]
+                },
+                {
+                    "$set": {
+                        "status": "failed",
+                        "stage": "finalizing",
+                        "error": f"Job reaped by Admin {current_admin.email} (timed out after {max_age_minutes}m).",
+                        "completedAt": datetime.utcnow(),
+                        "updatedAt": datetime.utcnow()
+                    }
+                }
+            )
+            reaped_count = res.modified_count
+        except Exception as e:
+            logger.error(f"Failed to purge stale jobs: {e}")
+
+    for jid, j in list(memory_store.jobs.items()):
+        st = str(j.get("status", "")).lower()
+        if st in stuck_statuses:
+            dt = j.get("updatedAt") or j.get("createdAt")
+            if isinstance(dt, datetime) and dt < cutoff:
+                memory_store.update_job(jid, {
+                    "status": "failed",
+                    "stage": "finalizing",
+                    "error": f"Job reaped by Admin {current_admin.email} (timed out).",
+                    "completedAt": datetime.utcnow(),
+                    "updatedAt": datetime.utcnow()
+                })
+                reaped_count += 1
+
+    memory_store.add_audit_log({
+        "id": f"audit_{uuid.uuid4().hex[:12]}",
+        "adminId": current_admin.id,
+        "adminEmail": current_admin.email,
+        "action": "JOB_PURGED",
+        "targetType": "SYSTEM",
+        "targetId": "jobs_queue",
+        "metadata": {"reapedCount": reaped_count, "maxAgeMinutes": max_age_minutes},
+        "createdAt": datetime.utcnow()
+    })
+
+    return {
+        "message": f"Successfully cleared {reaped_count} stuck jobs.",
+        "reapedCount": reaped_count,
+        "cutoff": cutoff.isoformat()
+    }

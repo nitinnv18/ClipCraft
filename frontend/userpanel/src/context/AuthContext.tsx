@@ -20,36 +20,19 @@ const AuthContext = createContext<AuthContextType>({
 
 function encodeUserForCookie(user: User): string {
   try {
-    const json = JSON.stringify(user);
-    if (typeof window !== "undefined" && window.btoa) {
-      return window.btoa(unescape(encodeURIComponent(json)));
-    }
-  } catch (_) {}
-  return encodeURIComponent(JSON.stringify(user));
-}
-
-function decodeUserFromCookie(val: string): User | null {
-  if (!val) return null;
-  try {
-    if (typeof window !== "undefined" && window.atob) {
-      return JSON.parse(decodeURIComponent(escape(window.atob(val))));
-    }
-  } catch (_) {}
-  try {
-    return JSON.parse(decodeURIComponent(val));
-  } catch (_) {}
-  try {
-    return JSON.parse(val);
-  } catch (_) {}
-  return null;
+    return encodeURIComponent(JSON.stringify(user));
+  } catch {
+    return "";
+  }
 }
 
 export function setAuthCookies(token: string, user: User) {
   if (typeof document === "undefined") return;
-  const maxAge = 60 * 60 * 24 * 30; // 30 days
+  const maxAge = 60 * 60 * 24; // 24 hours (matches backend ACCESS_TOKEN_EXPIRE_MINUTES)
   const encoded = encodeUserForCookie(user);
-  document.cookie = `clipcraft_user=${encoded}; path=/; max-age=${maxAge}; SameSite=Lax`;
-  document.cookie = `clipcraft_token=${encodeURIComponent(token)}; path=/; max-age=${maxAge}; SameSite=Lax`;
+  const secure = typeof window !== "undefined" && window.location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = `clipcraft_user=${encoded}; path=/; max-age=${maxAge}; SameSite=Lax${secure}`;
+  document.cookie = `clipcraft_token=${encodeURIComponent(token)}; path=/; max-age=${maxAge}; SameSite=Lax${secure}`;
 }
 
 export function clearAuthCookies() {
@@ -64,7 +47,7 @@ export const AuthProvider: React.FC<{
 }> = ({ children, initialUser = null }) => {
   // Use initialUser from SSR cookie as source of truth for 0-blink SSR
   const [user, setUser] = useState<User | null>(initialUser);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(!initialUser);
 
   useEffect(() => {
     // Synchronize client storage with cookie / session
@@ -98,8 +81,9 @@ export const AuthProvider: React.FC<{
             localStorage.setItem("clipcraft_user", JSON.stringify(freshUser));
             setAuthCookies(token, freshUser);
           })
-          .catch((e: any) => {
-            const msg = String(e?.message || "").toLowerCase();
+          .catch((e: unknown) => {
+            const errObj = e as { message?: string } | undefined;
+            const msg = String(errObj?.message || "").toLowerCase();
             if (
               msg.includes("invalid or expired") ||
               msg.includes("session expired") ||
@@ -112,11 +96,19 @@ export const AuthProvider: React.FC<{
               localStorage.removeItem("clipcraft_token");
               setUser(null);
             }
+          })
+          .finally(() => {
+            setIsLoading(false);
           });
-      } else if (!token && !initialUser) {
-        clearAuthCookies();
+      } else {
+        if (!token && !initialUser) {
+          clearAuthCookies();
+        }
+        setIsLoading(false);
       }
-    } catch (_) {}
+    } catch (_) {
+      setIsLoading(false);
+    }
   }, [initialUser]);
 
   const login = (token: string, userData: User) => {

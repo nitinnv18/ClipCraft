@@ -1,9 +1,18 @@
 "use client";
 
 import React, { useState } from "react";
-import { Monitor, Copy, Check, ShieldAlert, Smartphone } from "lucide-react";
+import { Monitor, Copy, Check, ShieldAlert, Smartphone, ArrowRight } from "lucide-react";
 
-export const DesktopOnlyGuard: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+interface DesktopOnlyGuardProps {
+  children: React.ReactNode;
+  enabled?: boolean;
+}
+
+export const DesktopOnlyGuard: React.FC<DesktopOnlyGuardProps> = ({
+  children,
+  enabled = true,
+}) => {
+  const [bypassed, setBypassed] = useState(false);
   const [copied, setCopied] = useState(false);
 
   const handleCopyLink = () => {
@@ -14,12 +23,18 @@ export const DesktopOnlyGuard: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   };
 
+  // If guard is disabled or administrator explicitly bypasses it, render app directly
+  if (!enabled || bypassed) {
+    return <>{children}</>;
+  }
+
   return (
     <>
       {/* 
         Admin Mobile Screen Blocker:
-        - Visible strictly on mobile viewports (< 768px).
-        - Automatically unlocks when 'Desktop site' mode (>= 768px / 980px) is enabled in mobile browser.
+        - Visible on mobile viewports (< 768px).
+        - Automatically unlocks when 'Desktop site' mode (>= 768px) is enabled in mobile browser.
+        - Configurable: admins can explicitly choose to continue on mobile or disable via props.
       */}
       <div className="md:hidden fixed inset-0 z-[999999] bg-[#0a0b0d] text-[#f3f4f6] flex flex-col items-center justify-center p-6 overflow-y-auto selection:bg-red-600 selection:text-white">
         <div className="relative w-full max-w-sm flex flex-col items-center text-center space-y-6 my-auto py-8">
@@ -40,7 +55,7 @@ export const DesktopOnlyGuard: React.FC<{ children: React.ReactNode }> = ({ chil
           {/* Headline & Explanation */}
           <div className="space-y-2">
             <h1 className="text-xl sm:text-2xl font-black uppercase tracking-tight text-white">
-              Desktop Screen Required
+              Desktop Screen Recommended
             </h1>
             <p className="text-xs text-gray-400 leading-relaxed">
               ClipCraft Admin Console is an enterprise operations workspace designed for desktop screens.
@@ -53,12 +68,12 @@ export const DesktopOnlyGuard: React.FC<{ children: React.ReactNode }> = ({ chil
               <span>💡 Access on Mobile:</span>
             </div>
             <p className="text-[12px] text-gray-400 leading-normal">
-              Tap browser menu (<span className="font-mono text-white">⋮</span> / <span className="font-mono text-white">aA</span>) and enable <span className="text-white font-semibold">"Desktop site"</span> to open console.
+              For complete layout fidelity, tap browser menu (<span className="font-mono text-white">⋮</span> / <span className="font-mono text-white">aA</span>) and enable <span className="text-white font-semibold">&ldquo;Desktop site&rdquo;</span>.
             </p>
           </div>
 
-          {/* Action: Copy Link */}
-          <div className="w-full space-y-3 pt-2">
+          {/* Actions: Copy Link & Emergency Mobile Access */}
+          <div className="w-full space-y-2.5 pt-2">
             <button
               type="button"
               onClick={handleCopyLink}
@@ -75,6 +90,15 @@ export const DesktopOnlyGuard: React.FC<{ children: React.ReactNode }> = ({ chil
                   <span>Copy Admin Console Link</span>
                 </>
               )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setBypassed(true)}
+              className="w-full py-2.5 px-4 bg-transparent hover:bg-[#16181f] text-gray-400 hover:text-white border border-[#282b35] text-xs font-mono uppercase tracking-wider flex items-center justify-center gap-1.5 transition-colors"
+            >
+              <span>Continue to Mobile Console</span>
+              <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>

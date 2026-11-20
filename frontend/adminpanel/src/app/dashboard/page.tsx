@@ -5,21 +5,18 @@ import Link from "next/link";
 import { adminApi } from "@/lib/adminApi";
 import { AdminDashboardData } from "@/types/admin";
 import { StatusBadge } from "@/components/StatusBadge";
-import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { formatTime } from "@/lib/utils";
 import {
   Users,
   Video,
   Film,
   HardDrive,
-  Clock,
   Activity,
   AlertTriangle,
   RefreshCw,
   ArrowRight,
   CheckCircle2,
-  XCircle,
-  Play,
 } from "lucide-react";
 
 export default function AdminDashboardPage() {
@@ -34,8 +31,8 @@ export default function AdminDashboardPage() {
       const res = await adminApi.getDashboard();
       setData(res);
       setError(null);
-    } catch (err: any) {
-      setError(err.message || "Failed to load dashboard metrics.");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to load dashboard metrics.");
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -44,8 +41,22 @@ export default function AdminDashboardPage() {
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 15000); // Polling every 15s
-    return () => clearInterval(interval);
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      loadData();
+    }, 15000); // Polling every 15s with visibility awareness
+
+    const handleVisibilityChange = () => {
+      if (typeof document !== "undefined" && !document.hidden) {
+        loadData();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, []);
 
   if (isLoading && !data) {
@@ -260,7 +271,7 @@ export default function AdminDashboardPage() {
                         </td>
                         <td className="py-2.5 text-gray-300">{job.clipCount}</td>
                         <td className="py-2.5 text-gray-400 text-[11px]">
-                          {new Date(job.createdAt).toLocaleTimeString()}
+                          {formatTime(job.createdAt)}
                         </td>
                         <td className="py-2.5 text-right">
                           <Link href={`/jobs/${job.id}`}>
@@ -288,7 +299,7 @@ export default function AdminDashboardPage() {
                   Recent Error Feed
                 </h2>
               </div>
-              <Link href="/logs" className="text-[11px] font-mono text-gray-400 hover:text-white">
+              <Link href="/audit-logs" className="text-[11px] font-mono text-gray-400 hover:text-white">
                 All Logs
               </Link>
             </div>
@@ -307,7 +318,7 @@ export default function AdminDashboardPage() {
                   >
                     <div className="flex items-center justify-between text-[10px] font-mono">
                       <span className="text-rose-400 font-bold uppercase">{err.service}</span>
-                      <span className="text-gray-400">{err.timestamp ? new Date(err.timestamp).toLocaleTimeString() : ""}</span>
+                      <span className="text-gray-400">{formatTime(err.timestamp)}</span>
                     </div>
                     <p className="text-gray-200 text-xs font-mono leading-tight line-clamp-2">
                       {err.message}

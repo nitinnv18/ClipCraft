@@ -1,7 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { AdminUser, AdminRole } from "@/types/admin";
 import { adminApi } from "@/lib/adminApi";
 
@@ -17,36 +17,19 @@ const AdminAuthContext = createContext<AdminAuthContextType | undefined>(undefin
 
 function encodeAdminForCookie(admin: AdminUser): string {
   try {
-    const json = JSON.stringify(admin);
-    if (typeof window !== "undefined" && window.btoa) {
-      return window.btoa(unescape(encodeURIComponent(json)));
-    }
-  } catch (_) {}
-  return encodeURIComponent(JSON.stringify(admin));
-}
-
-function decodeAdminFromCookie(val: string): AdminUser | null {
-  if (!val) return null;
-  try {
-    if (typeof window !== "undefined" && window.atob) {
-      return JSON.parse(decodeURIComponent(escape(window.atob(val))));
-    }
-  } catch (_) {}
-  try {
-    return JSON.parse(decodeURIComponent(val));
-  } catch (_) {}
-  try {
-    return JSON.parse(val);
-  } catch (_) {}
-  return null;
+    return encodeURIComponent(JSON.stringify(admin));
+  } catch {
+    return "";
+  }
 }
 
 export function setAdminCookies(token: string, admin: AdminUser) {
   if (typeof document === "undefined") return;
-  const maxAge = 60 * 60 * 24 * 7; // 7 days
+  const maxAge = 60 * 60 * 8; // 8 hours (matches backend ADMIN_TOKEN_EXPIRE_MINUTES)
   const encoded = encodeAdminForCookie(admin);
-  document.cookie = `clipcraft_admin_user=${encoded}; path=/; max-age=${maxAge}; SameSite=Lax`;
-  document.cookie = `clipcraft_admin_token=${encodeURIComponent(token)}; path=/; max-age=${maxAge}; SameSite=Lax`;
+  const secure = typeof window !== "undefined" && window.location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = `clipcraft_admin_user=${encoded}; path=/; max-age=${maxAge}; SameSite=Lax${secure}`;
+  document.cookie = `clipcraft_admin_token=${encodeURIComponent(token)}; path=/; max-age=${maxAge}; SameSite=Lax${secure}`;
 }
 
 export function clearAdminCookies() {
@@ -60,9 +43,8 @@ export const AdminAuthProvider: React.FC<{
   initialAdmin?: AdminUser | null;
 }> = ({ children, initialAdmin = null }) => {
   const [admin, setAdmin] = useState<AdminUser | null>(initialAdmin);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(!initialAdmin);
   const router = useRouter();
-  const pathname = usePathname();
 
   useEffect(() => {
     try {
@@ -94,17 +76,29 @@ export const AdminAuthProvider: React.FC<{
             localStorage.setItem("clipcraft_admin_user", JSON.stringify(me));
             setAdminCookies(storedToken, me);
           })
-          .catch(() => {
-            adminApi.clearToken();
-            clearAdminCookies();
-            localStorage.removeItem("clipcraft_admin_token");
-            localStorage.removeItem("clipcraft_admin_user");
-            setAdmin(null);
+          .catch((err: unknown) => {
+            const errStr = String(err instanceof Error ? err.message : "").toLowerCase();
+            const isAuthFailure = errStr.includes("401") || errStr.includes("unauthorized") || errStr.includes("forbidden");
+            if (isAuthFailure) {
+              adminApi.clearToken();
+              clearAdminCookies();
+              localStorage.removeItem("clipcraft_admin_token");
+              localStorage.removeItem("clipcraft_admin_user");
+              setAdmin(null);
+            }
+          })
+          .finally(() => {
+            setIsLoading(false);
           });
-      } else if (!storedToken && !initialAdmin) {
-        clearAdminCookies();
+      } else {
+        if (!storedToken && !initialAdmin) {
+          clearAdminCookies();
+        }
+        setIsLoading(false);
       }
-    } catch (_) {}
+    } catch (_) {
+      setIsLoading(false);
+    }
   }, [initialAdmin]);
 
   const login = (token: string, adminData: AdminUser) => {
@@ -113,7 +107,6 @@ export const AdminAuthProvider: React.FC<{
     localStorage.setItem("clipcraft_admin_token", token);
     setAdminCookies(token, adminData);
     setAdmin(adminData);
-    router.push("/dashboard");
   };
 
   const logout = async () => {

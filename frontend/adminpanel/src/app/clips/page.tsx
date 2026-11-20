@@ -3,20 +3,21 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { adminApi } from "@/lib/adminApi";
+import { logger } from "@/lib/logger";
 import { AdminClipRow } from "@/types/admin";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/Button";
+import { getMediaUrl, formatSeconds } from "@/lib/utils";
 import {
   Film,
   Search,
   Trash2,
   Play,
   X,
-  ExternalLink,
   RefreshCw,
   ChevronLeft,
   ChevronRight,
-  Sparkles,
+  ChevronDown,
 } from "lucide-react";
 
 export default function AdminClipsPage() {
@@ -27,6 +28,7 @@ export default function AdminClipsPage() {
   const [search, setSearch] = useState("");
   const [minScore, setMinScore] = useState<number | undefined>(undefined);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   // Preview Modal
   const [previewClip, setPreviewClip] = useState<AdminClipRow | null>(null);
@@ -37,6 +39,7 @@ export default function AdminClipsPage() {
 
   const loadClips = async () => {
     setIsLoading(true);
+    setError(null);
     try {
       const res = await adminApi.listClips({
         search: search.trim() || undefined,
@@ -47,7 +50,8 @@ export default function AdminClipsPage() {
       setClips(res.clips);
       setTotal(res.total);
     } catch (err) {
-      console.error(err);
+      logger.error("Failed to load clips catalog", err);
+      setError(err instanceof Error ? err.message : "Failed to load clips catalog.");
     } finally {
       setIsLoading(false);
     }
@@ -70,8 +74,8 @@ export default function AdminClipsPage() {
       await adminApi.deleteClip(deleteTarget.id);
       setDeleteTarget(null);
       loadClips();
-    } catch (err: any) {
-      alert(err.message || "Failed to delete clip.");
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Failed to delete clip.");
     } finally {
       setDeleteLoading(false);
     }
@@ -120,7 +124,7 @@ export default function AdminClipsPage() {
             <div className="w-full aspect-[9/16] max-h-[420px] bg-black border border-[#26282f] flex flex-col items-center justify-center relative overflow-hidden mx-auto">
               {previewClip.videoUrl ? (
                 <video
-                  src={previewClip.videoUrl}
+                  src={getMediaUrl(previewClip.videoUrl)}
                   controls
                   className="w-full h-full object-contain"
                 />
@@ -163,19 +167,22 @@ export default function AdminClipsPage() {
         </form>
 
         <div className="flex items-center gap-3">
-          <select
-            value={minScore || ""}
-            onChange={(e) => {
-              setMinScore(e.target.value ? Number(e.target.value) : undefined);
-              setPage(1);
-            }}
-            className="bg-[#181a1f] border border-[#30333d] px-3 py-2 text-xs font-mono uppercase text-gray-200 focus:outline-none focus:border-amber-500"
-          >
-            <option value="">All Scores</option>
-            <option value="90">90%+ Top Match</option>
-            <option value="80">80%+ High Quality</option>
-            <option value="70">70%+ Standard</option>
-          </select>
+          <div className="relative">
+            <select
+              value={minScore || ""}
+              onChange={(e) => {
+                setMinScore(e.target.value ? Number(e.target.value) : undefined);
+                setPage(1);
+              }}
+              className="bg-[#181a1f] border border-[#30333d] pl-3 pr-8 py-2 text-xs font-mono uppercase text-gray-200 focus:outline-none focus:border-amber-500 appearance-none cursor-pointer"
+            >
+              <option value="">All Scores</option>
+              <option value="90">90%+ Top Match</option>
+              <option value="80">80%+ High Quality</option>
+              <option value="70">70%+ Standard</option>
+            </select>
+            <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
 
           <Button variant="outline" size="sm" onClick={loadClips} className="font-mono text-xs">
             <RefreshCw className="w-3 h-3" />
@@ -187,6 +194,14 @@ export default function AdminClipsPage() {
       {isLoading ? (
         <div className="p-12 text-center text-xs font-mono text-gray-400 bg-[#121316] border border-[#272a30]">
           Loading clips library...
+        </div>
+      ) : error ? (
+        <div className="p-12 text-center text-xs font-mono text-red-400 bg-[#121316] border border-[#272a30] flex flex-col items-center gap-3">
+          <Film className="w-6 h-6 text-red-500" />
+          <span>{error}</span>
+          <Button variant="outline" size="sm" onClick={loadClips}>
+            Retry Connection
+          </Button>
         </div>
       ) : clips.length === 0 ? (
         <div className="p-12 text-center text-xs font-mono text-gray-400 bg-[#121316] border border-[#272a30] flex flex-col items-center gap-2">
@@ -220,7 +235,7 @@ export default function AdminClipsPage() {
               </div>
 
               <div className="pt-3 border-t border-[#1e2025] flex items-center justify-between text-xs font-mono">
-                <span className="text-gray-400 text-[11px]">{c.duration}s</span>
+                <span className="text-gray-400 text-[11px]">{formatSeconds(c.duration)}</span>
 
                 <div className="flex items-center gap-1.5">
                   <button

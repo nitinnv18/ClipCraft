@@ -15,7 +15,14 @@ const eslintConfig = [
       },
     },
     rules: {
-      "no-unused-vars": "off",
+      "no-unused-vars": [
+        "warn",
+        {
+          "args": "none",
+          "caughtErrors": "none",
+          "varsIgnorePattern": "^_"
+        }
+      ],
       "no-undef": "off",
     },
   },

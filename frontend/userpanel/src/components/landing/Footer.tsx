@@ -1,4 +1,3 @@
-"use client";
 
 import React from "react";
 import Link from "next/link";
@@ -21,7 +20,7 @@ export const Footer: React.FC = () => {
               </span>
             </Link>
             <p className="text-xs text-gray-400 max-w-sm leading-relaxed font-sans">
-              Autonomous short-form video repurposing utility. Transforms YouTube long-form videos into high-retention 9:16 vertical clips with styled subtitles.
+              Autonomous short-form video repurposing utility. Transforms long-form videos into high-retention 9:16 vertical clips with styled subtitles directly on your device.
             </p>
           </div>
 

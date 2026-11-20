@@ -3,7 +3,6 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
 import { VideoJob } from "@/types";
 import { Card } from "@/components/ui/Card";
@@ -13,21 +12,18 @@ import { getMediaUrl } from "@/lib/utils";
 import {
   History,
   Scissors,
-  Search,
   Trash2,
-  ArrowRight,
-  Clock,
   RefreshCw,
   Video,
   Film,
   CheckCircle2,
-  AlertTriangle,
-  Play,
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
 } from "lucide-react";
 
 export default function HistoryPage() {
   const router = useRouter();
-  const { user } = useAuth();
 
   const [jobs, setJobs] = useState<VideoJob[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,6 +31,8 @@ export default function HistoryPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const ITEMS_PER_PAGE = 8;
 
   useEffect(() => {
     document.title = "ClipCraft - Job History";
@@ -46,8 +44,8 @@ export default function HistoryPage() {
       const data = await api.listJobs();
       setJobs(data);
       setError(null);
-    } catch (err: any) {
-      setError(err.message || "Failed to load job history.");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to load job history.");
     } finally {
       setLoading(false);
     }
@@ -64,8 +62,8 @@ export default function HistoryPage() {
     try {
       await api.deleteJob(id);
       setJobs((prev) => prev.filter((j) => j.id !== id));
-    } catch (err: any) {
-      alert(err.message || "Failed to delete job.");
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Failed to delete job.");
     } finally {
       setDeletingId(null);
     }
@@ -81,8 +79,14 @@ export default function HistoryPage() {
     return matchesFilter && matchesSearch;
   });
 
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, statusFilter]);
+
   const totalCompleted = jobs.filter((j) => j.status === "completed").length;
   const totalClips = jobs.reduce((acc, j) => acc + (j.clips?.length ?? 0), 0);
+  const totalPages = Math.ceil(filteredJobs.length / ITEMS_PER_PAGE) || 1;
+  const paginatedJobs = filteredJobs.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
 
   return (
     <div className="w-full flex flex-col items-center py-6 sm:py-10 max-w-7xl mx-auto px-4 sm:px-6">
@@ -140,16 +144,19 @@ export default function HistoryPage() {
         </div>
 
         <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="bg-[#181a1f] text-gray-200 border border-[#323640] px-3 py-2 text-xs font-mono uppercase focus:outline-none focus:border-amber-500"
-          >
-            <option value="all">All Statuses</option>
-            <option value="completed">Completed</option>
-            <option value="processing">Processing</option>
-            <option value="failed">Failed</option>
-          </select>
+          <div className="relative">
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="bg-[#181a1f] text-gray-200 border border-[#323640] pl-3 pr-8 py-2 text-xs font-mono uppercase focus:outline-none focus:border-amber-500 appearance-none cursor-pointer"
+            >
+              <option value="all">All Statuses</option>
+              <option value="completed">Completed</option>
+              <option value="processing">Processing</option>
+              <option value="failed">Failed</option>
+            </select>
+            <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
 
           <Button variant="outline" size="sm" onClick={loadJobs} isLoading={loading} className="font-mono text-xs">
             <RefreshCw className="w-3.5 h-3.5" />
@@ -189,7 +196,7 @@ export default function HistoryPage() {
           </div>
         ) : (
           <div className="flex flex-col gap-3">
-            {filteredJobs.map((job) => (
+            {paginatedJobs.map((job) => (
               <Card
                 key={job.id}
                 className="p-4 bg-[#141518] hover:bg-[#181a1e] border-[#272a31] cursor-pointer transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-4"
@@ -230,7 +237,7 @@ export default function HistoryPage() {
                 </div>
 
                 <div className="flex items-center justify-between sm:justify-end gap-3 flex-shrink-0 border-t sm:border-t-0 pt-2 sm:pt-0 border-[#22252c]">
-                  <Badge variant={job.status as any}>{job.status}</Badge>
+                  <Badge variant={job.status}>{job.status}</Badge>
 
                   <div className="flex items-center gap-1.5">
                     <Button
@@ -257,6 +264,34 @@ export default function HistoryPage() {
                 </div>
               </Card>
             ))}
+
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between pt-4 border-t border-[#22252c] text-xs font-mono text-gray-400">
+                <span>
+                  Showing Page {currentPage} of {totalPages} ({filteredJobs.length} total)
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={currentPage <= 1}
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    className="p-1.5"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={currentPage >= totalPages}
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                    className="p-1.5"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

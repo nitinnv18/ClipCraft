@@ -1,7 +1,6 @@
-"use client";
 
 import React from "react";
-import { Check, X, Shield, Cpu, Sparkles, Terminal } from "lucide-react";
+import { Check, X, Terminal } from "lucide-react";
 
 export const QualitySection: React.FC = () => {
   const looksFor = [

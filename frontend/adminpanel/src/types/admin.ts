@@ -126,6 +126,8 @@ export interface AdminJobRow {
   progress: number;
   clipCount: number;
   duration: number;
+  processingMode?: "cloud" | "on-device";
+  isClientRendered?: boolean;
   createdAt: string;
   completedAt?: string;
   error?: string;
@@ -145,6 +147,8 @@ export interface AdminJobDetail {
     stage: string;
     progress: number;
     clipCount: number;
+    processingMode?: "cloud" | "on-device";
+    isClientRendered?: boolean;
     settings: Record<string, any>;
     createdAt: string;
     startedAt?: string;
@@ -219,6 +223,43 @@ export interface AdminStorageData {
     configured: boolean;
     cloudName: string;
   };
+  layers?: {
+    cdn: {
+      name: string;
+      type: string;
+      purpose: string;
+      provider: string;
+      bytes: number;
+      formatted: string;
+      clipFiles: number;
+      thumbFiles: number;
+      status: string;
+    };
+    mongodb: {
+      name: string;
+      type: string;
+      purpose: string;
+      database: string;
+      connected: boolean;
+      totalDocuments: number;
+      collections: {
+        users: number;
+        jobs: number;
+        clips: number;
+      };
+      bytes: number;
+      formatted: string;
+    };
+    diskCache: {
+      name: string;
+      type: string;
+      purpose: string;
+      bytes: number;
+      formatted: string;
+      fileCount: number;
+      cleanupTarget: boolean;
+    };
+  };
 }
 
 export interface SystemHealthData {
@@ -276,6 +317,7 @@ export interface SystemSettingsData {
   sessionTimeoutMinutes: number;
   requireAdmin2FA: boolean;
   maxLoginAttempts: number;
+  lockoutDurationMinutes?: number;
   updatedBy?: string;
   updatedAt?: string;
 }

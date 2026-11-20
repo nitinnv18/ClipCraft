@@ -2,7 +2,7 @@
 
 import React, { useEffect } from "react";
 import { usePathname } from "next/navigation";
-import Lenis from "lenis";
+import type Lenis from "lenis";
 
 export const SmoothScrollProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const pathname = usePathname();
@@ -13,45 +13,64 @@ export const SmoothScrollProvider: React.FC<{ children: React.ReactNode }> = ({ 
     // Keep Dashboard and App pages fast, snappy, and zero-latency
     if (!isLandingPage) return;
 
-    const lenis = new Lenis({
-      duration: 1.0,
-      easing: (t: number) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
-      orientation: "vertical",
-      gestureOrientation: "vertical",
-      smoothWheel: true,
-      wheelMultiplier: 1.0,
-      touchMultiplier: 2,
-    });
-
+    let isCancelled = false;
+    let lenisInstance: Lenis | null = null;
     let rafId: number;
-    function raf(time: number) {
-      lenis.raf(time);
-      rafId = requestAnimationFrame(raf);
-    }
+    let handleAnchorClick: ((e: MouseEvent) => void) | null = null;
 
-    rafId = requestAnimationFrame(raf);
+    const initLenis = async () => {
+      const { default: LenisConstructor } = await import("lenis");
+      if (isCancelled) return;
 
-    // Smooth Anchor Navigation on click (Landing page sections)
-    const handleAnchorClick = (e: MouseEvent) => {
-      const target = (e.target as HTMLElement).closest("a");
-      if (!target) return;
+      const lenis = new LenisConstructor({
+        duration: 1.0,
+        easing: (t: number) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
+        orientation: "vertical",
+        gestureOrientation: "vertical",
+        smoothWheel: true,
+        wheelMultiplier: 1.0,
+        touchMultiplier: 2,
+      });
+      lenisInstance = lenis;
 
-      const href = target.getAttribute("href");
-      if (href && href.startsWith("#") && href.length > 1) {
-        const element = document.querySelector(href);
-        if (element) {
-          e.preventDefault();
-          lenis.scrollTo(element as HTMLElement, { offset: -80, duration: 1.0 });
-        }
+      function raf(time: number) {
+        lenis.raf(time);
+        rafId = requestAnimationFrame(raf);
       }
+
+      rafId = requestAnimationFrame(raf);
+
+      // Smooth Anchor Navigation on click (Landing page sections)
+      handleAnchorClick = (e: MouseEvent) => {
+        const target = (e.target as HTMLElement).closest("a");
+        if (!target) return;
+
+        const href = target.getAttribute("href");
+        if (href && href.startsWith("#") && href.length > 1) {
+          const element = document.querySelector(href);
+          if (element) {
+            e.preventDefault();
+            lenis.scrollTo(element as HTMLElement, { offset: -80, duration: 1.0 });
+          }
+        }
+      };
+
+      document.addEventListener("click", handleAnchorClick);
     };
 
-    document.addEventListener("click", handleAnchorClick);
+    initLenis();
 
     return () => {
-      document.removeEventListener("click", handleAnchorClick);
-      cancelAnimationFrame(rafId);
-      lenis.destroy();
+      isCancelled = true;
+      if (handleAnchorClick) {
+        document.removeEventListener("click", handleAnchorClick);
+      }
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+      }
+      if (lenisInstance) {
+        lenisInstance.destroy();
+      }
     };
   }, [isLandingPage]);
 

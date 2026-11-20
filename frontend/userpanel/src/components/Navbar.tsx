@@ -6,10 +6,12 @@ import { usePathname } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/Button";
 import { api } from "@/lib/api";
-import { Scissors, LogOut, History, Menu, X } from "lucide-react";
+import { useVideoProcessing } from "@/context/VideoProcessingContext";
+import { Scissors, LogOut, History, Menu, X, Zap, CheckCircle2 } from "lucide-react";
 
 export const Navbar: React.FC = () => {
   const { user, logout } = useAuth();
+  const { isSubmitting, clientProgress, clientClips } = useVideoProcessing();
   const pathname = usePathname();
   const [backendOk, setBackendOk] = useState<boolean>(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -78,6 +80,29 @@ export const Navbar: React.FC = () => {
 
         {/* Status & Auth actions */}
         <div className="hidden md:flex items-center gap-3 min-w-[200px] justify-end" suppressHydrationWarning>
+          {/* Active Video Rendering Pill */}
+          {isSubmitting && (
+            <Link
+              href="/dashboard"
+              className="flex items-center gap-2 px-2.5 py-1 bg-amber-500/15 border border-amber-500/40 text-amber-400 text-xs font-mono font-bold hover:bg-amber-500/25 transition-all shadow-[0_0_12px_rgba(245,158,11,0.2)]"
+              title="Clip generation in progress - click to view"
+            >
+              <Zap className="w-3.5 h-3.5 text-amber-400 fill-amber-400 animate-pulse" />
+              <span>CLIPPING {clientProgress}%</span>
+            </Link>
+          )}
+
+          {!isSubmitting && clientClips.length > 0 && pathname !== "/dashboard" && (
+            <Link
+              href="/dashboard"
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 text-xs font-mono font-bold hover:bg-emerald-500/25 transition-all"
+              title="Clips ready - click to view"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>{clientClips.length} CLIPS READY</span>
+            </Link>
+          )}
+
           {/* Health indicator - defaults to Online to prevent flicker */}
           <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[#141518] border border-[#26282f] text-[11px] text-gray-400 uppercase font-mono">
             <span
@@ -113,12 +138,12 @@ export const Navbar: React.FC = () => {
               </div>
             ) : (
               <div className="flex items-center gap-2">
-                <Link href="/login">
+                <Link href="/login" prefetch={true}>
                   <Button variant="outline" size="sm" className="font-semibold text-gray-300 hover:text-white">
                     Sign In
                   </Button>
                 </Link>
-                <Link href="/register">
+                <Link href="/register" prefetch={true}>
                   <Button variant="primary" size="sm" className="font-bold">
                     Register
                   </Button>

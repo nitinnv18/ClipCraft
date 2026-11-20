@@ -2,20 +2,11 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional
 from app.models.clip import ClipCandidate
 
-class TranscriptSegment(dict):
-    start: float
-    end: float
-    text: str
-
 class TranscriptResult:
     def __init__(self, segments: List[Dict[str, Any]], language: str = "en", is_generated: bool = False):
         self.segments = segments
         self.language = language
         self.is_generated = is_generated
-
-    @property
-    def full_text(self) -> str:
-        return " ".join(s["text"] for s in self.segments)
 
 class BaseTranscriptProvider(ABC):
     @abstractmethod
@@ -54,11 +45,6 @@ class BaseStorageProvider(ABC):
 
 class BaseVideoProcessor(ABC):
     @abstractmethod
-    async def check_ffmpeg_installed(self) -> bool:
-        """Check if FFmpeg is available."""
-        pass
-
-    @abstractmethod
     async def download_video(self, youtube_url: str, output_dir: str, **kwargs) -> Dict[str, Any]:
         """Download YouTube video using yt-dlp/ffmpeg and return metadata + path."""
         pass
@@ -88,4 +74,9 @@ class BaseQueueProvider(ABC):
     @abstractmethod
     async def get_next_job(self, timeout_seconds: int = 5) -> Optional[Dict[str, Any]]:
         """Fetch next job from queue."""
+        pass
+
+    @abstractmethod
+    async def ack_job(self, job_id: str, payload: Optional[Dict[str, Any]] = None) -> bool:
+        """Acknowledge job completion and remove from processing queue."""
         pass

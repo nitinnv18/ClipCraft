@@ -1,30 +1,43 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import Link from "next/link";
 import { adminApi } from "@/lib/adminApi";
+import { logger } from "@/lib/logger";
 import { AdminJobDetail } from "@/types/admin";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/Button";
+import { formatDateTime, formatTime } from "@/lib/utils";
 import {
-  Video,
   ArrowLeft,
   RotateCcw,
   Ban,
   CheckCircle2,
   Clock,
   Terminal,
-  Film,
   ExternalLink,
-  Layers,
-  Sparkles,
+  Cloud,
+  Laptop,
 } from "lucide-react";
+
+function getSafeHttpUrl(url?: string | null): string | null {
+  if (!url || typeof url !== "string") return null;
+  const trimmed = url.trim();
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      return trimmed;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
 
 export default function AdminJobDetailPage() {
   const params = useParams();
-  const router = useRouter();
   const jobId = params.id as string;
 
   const [data, setData] = useState<AdminJobDetail | null>(null);
@@ -32,23 +45,45 @@ export default function AdminJobDetailPage() {
   const [actionType, setActionType] = useState<"retry" | "cancel" | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
 
-  const loadJob = async () => {
-    setIsLoading(true);
+  const loadJob = async (isInitial = false) => {
+    if (isInitial) setIsLoading(true);
     try {
       const res = await adminApi.getJobDetail(jobId);
       setData(res);
     } catch (err) {
-      console.error(err);
+      logger.error("Failed to load job details", err);
     } finally {
-      setIsLoading(false);
+      if (isInitial) setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    loadJob();
-    const interval = setInterval(loadJob, 10000);
-    return () => clearInterval(interval);
+    loadJob(true);
   }, [jobId]);
+
+  // Polling only while job is actively running, pause when tab is hidden, stop completely when terminal
+  useEffect(() => {
+    if (!data?.job) return;
+    const isTerminal = ["completed", "failed", "error", "cancelled"].includes(data.job.status);
+    if (isTerminal) return;
+
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      loadJob(false);
+    }, 4000);
+
+    const handleVisibilityChange = () => {
+      if (typeof document !== "undefined" && !document.hidden) {
+        loadJob(false);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [jobId, data?.job?.status]);
 
   const handleAction = async () => {
     if (!actionType) return;
@@ -61,8 +96,8 @@ export default function AdminJobDetailPage() {
       }
       setActionType(null);
       loadJob();
-    } catch (err: any) {
-      alert(err.message || "Action failed.");
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Action failed.");
     } finally {
       setActionLoading(false);
     }
@@ -118,6 +153,17 @@ export default function AdminJobDetailPage() {
             <div className="flex items-center gap-2">
               <h1 className="text-sm font-bold uppercase text-white font-mono">{j.title}</h1>
               <StatusBadge status={j.status} />
+              {j.processingMode === "on-device" || j.isClientRendered ? (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-950/70 text-emerald-400 border border-emerald-800/60">
+                  <Laptop className="w-3 h-3 text-emerald-400" />
+                  On-Device
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-sky-950/70 text-sky-400 border border-sky-800/60">
+                  <Cloud className="w-3 h-3 text-sky-400" />
+                  Cloud
+                </span>
+              )}
             </div>
             <span className="text-[10px] font-mono text-gray-400">
               Job ID: {j.id} &bull; User: {j.userEmail}
@@ -193,9 +239,36 @@ export default function AdminJobDetailPage() {
             <div className="flex flex-col gap-2.5 text-xs font-mono text-gray-300">
               <div className="flex items-center justify-between py-1 border-b border-[#1c1e24]">
                 <span className="text-gray-400">YouTube URL:</span>
-                <a href={j.youtubeUrl} target="_blank" className="text-amber-400 hover:underline truncate max-w-[200px]">
-                  {j.youtubeUrl}
-                </a>
+                {getSafeHttpUrl(j.youtubeUrl) ? (
+                  <a
+                    href={getSafeHttpUrl(j.youtubeUrl)!}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-amber-400 hover:underline truncate max-w-[200px]"
+                  >
+                    {j.youtubeUrl}
+                  </a>
+                ) : (
+                  <span className="text-gray-400 truncate max-w-[200px]">
+                    {j.youtubeUrl || "—"}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center justify-between py-1 border-b border-[#1c1e24]">
+                <span className="text-gray-400">Processing Mode:</span>
+                <span className="text-white font-bold inline-flex items-center gap-1.5">
+                  {j.processingMode === "on-device" || j.isClientRendered ? (
+                    <>
+                      <Laptop className="w-3.5 h-3.5 text-emerald-400" />
+                      <span className="text-emerald-400">On-Device (Client Rendered)</span>
+                    </>
+                  ) : (
+                    <>
+                      <Cloud className="w-3.5 h-3.5 text-sky-400" />
+                      <span className="text-sky-400">Cloud / Server Render</span>
+                    </>
+                  )}
+                </span>
               </div>
               <div className="flex items-center justify-between py-1 border-b border-[#1c1e24]">
                 <span className="text-gray-400">Target Clip Count:</span>
@@ -211,11 +284,11 @@ export default function AdminJobDetailPage() {
               </div>
               <div className="flex items-center justify-between py-1 border-b border-[#1c1e24]">
                 <span className="text-gray-400">Created At:</span>
-                <span className="text-gray-200">{new Date(j.createdAt).toLocaleString()}</span>
+                <span className="text-gray-200">{formatDateTime(j.createdAt)}</span>
               </div>
               <div className="flex items-center justify-between py-1 border-b border-[#1c1e24]">
                 <span className="text-gray-400">Completed At:</span>
-                <span className="text-gray-200">{j.completedAt ? new Date(j.completedAt).toLocaleString() : "—"}</span>
+                <span className="text-gray-200">{j.completedAt ? formatDateTime(j.completedAt) : "—"}</span>
               </div>
             </div>
           </div>
@@ -239,7 +312,7 @@ export default function AdminJobDetailPage() {
             {data.logs.map((log, idx) => (
               <div key={idx} className="flex items-start gap-2.5">
                 <span className="text-gray-500 text-[10px] flex-shrink-0 mt-0.5">
-                  {log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : ""}
+                  {log.timestamp ? formatTime(log.timestamp) : ""}
                 </span>
                 <span className="text-gray-200">{log.message}</span>
               </div>
@@ -279,12 +352,19 @@ export default function AdminJobDetailPage() {
 
                 <div className="pt-3 border-t border-[#20232b] flex items-center justify-between text-[11px] font-mono text-gray-400">
                   <span>Duration: {c.duration}s</span>
-                  {c.videoUrl && (
-                    <a href={c.videoUrl} target="_blank" className="text-amber-400 hover:underline flex items-center gap-1">
+                  {getSafeHttpUrl(c.videoUrl) ? (
+                    <a
+                      href={getSafeHttpUrl(c.videoUrl)!}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-amber-400 hover:underline flex items-center gap-1"
+                    >
                       <span>Stream Clip</span>
                       <ExternalLink className="w-3 h-3" />
                     </a>
-                  )}
+                  ) : c.videoUrl ? (
+                    <span className="text-gray-500 italic">Invalid Video URL</span>
+                  ) : null}
                 </div>
               </div>
             ))}

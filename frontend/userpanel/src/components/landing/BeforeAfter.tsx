@@ -1,7 +1,6 @@
-"use client";
 
 import React from "react";
-import { Clock, Film, ArrowRight, Play, CheckCircle2, XCircle } from "lucide-react";
+import { Film, ArrowRight, CheckCircle2, XCircle } from "lucide-react";
 
 export const BeforeAfter: React.FC = () => {
   const shortClips = [

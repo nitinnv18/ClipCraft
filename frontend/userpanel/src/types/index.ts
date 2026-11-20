@@ -27,16 +27,6 @@ export interface JobSettings {
   minDuration: number;
   maxDuration: number;
   format: string;
-  captions: boolean;
-  saveToCloud: boolean;
-}
-
-export interface CreateJobInput {
-  youtubeUrl: string;
-  clipCount?: number;
-  minDuration?: number;
-  maxDuration?: number;
-  format?: "9:16" | "1:1" | "16:9" | string;
   captions?: boolean;
   saveToCloud?: boolean;
 }
@@ -53,11 +43,9 @@ export interface Clip {
   description?: string;
   summary?: string;
   score?: number;
-  viralityScore?: number;
   videoUrl: string;
   thumbnailUrl?: string;
   aspectRatio?: string;
-  captionsText?: string;
   segments?: { start: number; end: number; text: string }[];
   createdAt: string;
 }
@@ -83,3 +71,30 @@ export interface VideoJob {
   error?: string;
   clips?: Clip[];
 }
+
+export interface SubtitleSegment {
+  start: number;
+  end: number;
+  text: string;
+}
+
+export interface PlannedClip {
+  id: string;
+  start: number;
+  end: number;
+  title: string;
+  hook: string;
+  score: number;
+  category?: string;
+  reason?: string;
+  duration?: number;
+  subtitles?: SubtitleSegment[];
+}
+
+export interface VideoPlanResponse {
+  clips: PlannedClip[];
+  videoDuration: number;
+  transcriptCount?: number;
+  hasRealSpeech?: boolean;
+}
+

@@ -1,12 +1,16 @@
+import os
 import uuid
 from datetime import datetime
-from typing import Optional, List, Dict, Any
-from fastapi import APIRouter, HTTPException, Depends, Query, status
+from typing import Optional, Dict, Any
+from fastapi import APIRouter, HTTPException, Depends, Query
+from app.core.config import settings
 from app.db.mongodb import get_database
 from app.db.memory_store import memory_store
 from app.models.admin import AdminResponse, AdminRole
-from app.api.admin.auth import get_current_admin
+from app.api.admin.auth import get_current_admin, require_roles
 from app.core.logging import logger
+from app.core.utils import format_iso_utc
+from app.providers.storage.cloudinary_provider import cloudinary_provider
 
 router = APIRouter(prefix="/clips", tags=["Admin Clips"])
 
@@ -19,23 +23,73 @@ async def list_admin_clips(
     current_admin: AdminResponse = Depends(get_current_admin)
 ) -> Dict[str, Any]:
     db = get_database()
+    skip = (page - 1) * limit
+
+    # Native database-level pagination to prevent RAM spikes / OOM DoS
+    if db is not None:
+        try:
+            query: Dict[str, Any] = {}
+            if min_score is not None:
+                query["score"] = {"$gte": min_score}
+            if search:
+                import re
+                safe_s = re.escape(search.strip())
+                query["$or"] = [
+                    {"title": {"$regex": safe_s, "$options": "i"}},
+                    {"hook": {"$regex": safe_s, "$options": "i"}},
+                    {"jobId": {"$regex": safe_s, "$options": "i"}},
+                    {"userId": {"$regex": safe_s, "$options": "i"}},
+                ]
+
+            total = await db.clips.count_documents(query)
+            page_clips = await db.clips.find(query).sort("createdAt", -1).skip(skip).limit(limit).to_list(limit)
+
+            # Query only the users and jobs referenced on this specific page (max 24)
+            clip_uids = list({str(c.get("userId")) for c in page_clips if c.get("userId")})
+            clip_jids = list({str(c.get("jobId")) for c in page_clips if c.get("jobId")})
+
+            user_docs = await db.users.find({"_id": {"$in": clip_uids}}, {"_id": 1, "email": 1}).to_list(100) if clip_uids else []
+            job_docs = await db.jobs.find({"_id": {"$in": clip_jids}}, {"_id": 1, "title": 1}).to_list(100) if clip_jids else []
+
+            user_map = {str(u["_id"]): u.get("email") for u in user_docs}
+            job_map = {str(j["_id"]): j.get("title") for j in job_docs}
+
+            rows = []
+            for c in page_clips:
+                uid = str(c.get("userId", ""))
+                jid = str(c.get("jobId", ""))
+                rows.append({
+                    "id": str(c.get("id") or c.get("_id")),
+                    "jobId": jid,
+                    "jobTitle": job_map.get(jid) or c.get("jobTitle") or "ClipCraft Video",
+                    "userId": uid,
+                    "userEmail": user_map.get(uid) or c.get("userEmail") or "User",
+                    "title": c.get("title", "Untitled Clip"),
+                    "hook": c.get("hook", ""),
+                    "duration": c.get("duration", 0),
+                    "startTime": c.get("startTime", 0),
+                    "endTime": c.get("endTime", 0),
+                    "score": c.get("score", 90),
+                    "videoUrl": c.get("videoUrl", ""),
+                    "thumbnailUrl": c.get("thumbnailUrl", ""),
+                    "cloudinaryPublicId": c.get("cloudinaryPublicId"),
+                    "createdAt": format_iso_utc(c.get("createdAt"))
+                })
+
+            return {
+                "clips": rows,
+                "total": total,
+                "page": page,
+                "limit": limit,
+                "pages": (total + limit - 1) // limit
+            }
+        except Exception as e:
+            logger.warning(f"DB clips query error, falling back to memory store: {e}")
+
+    # Memory store fallback (for offline or local dev without MongoDB)
     all_clips = memory_store.get_all_clips()
     all_jobs = memory_store.get_all_jobs()
     all_users = memory_store.get_all_users()
-
-    if db is not None:
-        try:
-            mongo_clips = await db.clips.find({}).to_list(10000)
-            if mongo_clips:
-                all_clips = mongo_clips
-            mongo_jobs = await db.jobs.find({}).to_list(10000)
-            if mongo_jobs:
-                all_jobs = mongo_jobs
-            mongo_users = await db.users.find({}).to_list(10000)
-            if mongo_users:
-                all_users = mongo_users
-        except Exception:
-            pass
 
     user_map = {str(u.get("_id") or u.get("id")): u.get("email") for u in all_users}
     job_map = {str(j.get("_id") or j.get("id")): j.get("title") for j in all_jobs}
@@ -81,7 +135,7 @@ async def list_admin_clips(
             "videoUrl": c.get("videoUrl", ""),
             "thumbnailUrl": c.get("thumbnailUrl", ""),
             "cloudinaryPublicId": c.get("cloudinaryPublicId"),
-            "createdAt": str(c.get("createdAt", ""))
+            "createdAt": format_iso_utc(c.get("createdAt"))
         })
 
     return {
@@ -95,7 +149,7 @@ async def list_admin_clips(
 @router.delete("/{clip_id}")
 async def delete_clip(
     clip_id: str,
-    current_admin: AdminResponse = Depends(get_current_admin)
+    current_admin: AdminResponse = Depends(require_roles([AdminRole.SUPER_ADMIN, AdminRole.ADMIN]))
 ):
     db = get_database()
     clip_doc = memory_store.get_clip(clip_id)
@@ -107,6 +161,32 @@ async def delete_clip(
 
     if not clip_doc:
         raise HTTPException(status_code=404, detail="Clip not found.")
+
+    # 1. Clean up remote Cloudinary asset if present
+    pub_id = clip_doc.get("cloudinaryPublicId")
+    if pub_id:
+        try:
+            await cloudinary_provider.delete_file(pub_id)
+        except Exception as e:
+            logger.warning(f"Failed to delete Cloudinary asset for clip {clip_id}: {e}")
+
+    # 2. Clean up local video and thumbnail files on disk
+    temp_dir = settings.TEMP_STORAGE_DIR
+    local_candidates = []
+    if clip_doc.get("videoUrl"):
+        local_candidates.append(os.path.join(temp_dir, "public_media", "clips", os.path.basename(clip_doc["videoUrl"])))
+    if clip_doc.get("thumbnailUrl"):
+        local_candidates.append(os.path.join(temp_dir, "public_media", "thumbnails", os.path.basename(clip_doc["thumbnailUrl"])))
+    local_candidates.append(os.path.join(temp_dir, "public_media", "clips", f"{clip_id}.mp4"))
+    local_candidates.append(os.path.join(temp_dir, "public_media", "thumbnails", f"{clip_id}.jpg"))
+
+    for fp in set(local_candidates):
+        try:
+            if os.path.isfile(fp):
+                os.remove(fp)
+                logger.info(f"Deleted local file for clip {clip_id}: {fp}")
+        except Exception as e:
+            logger.warning(f"Failed to delete local file {fp}: {e}")
 
     memory_store.delete_clip(clip_id)
     if db is not None:

@@ -1,6 +1,5 @@
 from typing import List, Dict, Any
 from app.models.clip import ClipCandidate
-from app.core.logging import logger
 
 class BoundaryOptimizer:
     """Optimizes clip boundaries to snap perfectly to spoken sentence boundaries and natural speech pauses,

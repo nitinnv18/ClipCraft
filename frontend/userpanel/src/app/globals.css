@@ -47,11 +47,6 @@ body {
   min-height: 100vh;
 }
 
-/* Strict No Gradients Rule */
-*, *::before, *::after {
-  background-image: none !important;
-}
-
 /* Custom Scrollbar - Sharp & Minimal */
 ::-webkit-scrollbar {
   width: 6px;

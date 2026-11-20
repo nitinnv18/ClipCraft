@@ -3,22 +3,25 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { adminApi } from "@/lib/adminApi";
+import { logger } from "@/lib/logger";
 import { AdminJobRow } from "@/types/admin";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/Button";
+import { formatDate } from "@/lib/utils";
 import {
   Video,
   Search,
-  Filter,
   RotateCcw,
   Ban,
   Eye,
   RefreshCw,
   ChevronLeft,
   ChevronRight,
-  Clock,
-  Layers,
+  ChevronDown,
+  Cloud,
+  Laptop,
+  Flame,
 } from "lucide-react";
 
 export default function AdminJobsPage() {
@@ -29,27 +32,47 @@ export default function AdminJobsPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [stageFilter, setStageFilter] = useState("");
+  const [modeFilter, setModeFilter] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   // Dialog State
   const [selectedJob, setSelectedJob] = useState<AdminJobRow | null>(null);
   const [actionType, setActionType] = useState<"retry" | "cancel" | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [isSweeping, setIsSweeping] = useState(false);
+
+  const handleSweepStuck = async () => {
+    if (!window.confirm("Clear all jobs stuck in queue/processing for more than 20 minutes?")) return;
+    setIsSweeping(true);
+    try {
+      const res = await adminApi.purgeStuckJobs(20);
+      alert(res.message);
+      loadJobs();
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Failed to clear stuck jobs.");
+    } finally {
+      setIsSweeping(false);
+    }
+  };
 
   const loadJobs = async () => {
     setIsLoading(true);
+    setError(null);
     try {
       const res = await adminApi.listJobs({
         search: search.trim() || undefined,
         status: statusFilter || undefined,
         stage: stageFilter || undefined,
+        mode: modeFilter || undefined,
         page,
         limit,
       });
       setJobs(res.jobs);
       setTotal(res.total);
     } catch (err) {
-      console.error(err);
+      logger.error("Failed to load jobs list", err);
+      setError(err instanceof Error ? err.message : "Failed to load jobs list.");
     } finally {
       setIsLoading(false);
     }
@@ -57,7 +80,7 @@ export default function AdminJobsPage() {
 
   useEffect(() => {
     loadJobs();
-  }, [page, statusFilter, stageFilter]);
+  }, [page, statusFilter, stageFilter, modeFilter]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,8 +100,8 @@ export default function AdminJobsPage() {
       setActionType(null);
       setSelectedJob(null);
       loadJobs();
-    } catch (err: any) {
-      alert(err.message || "Failed to execute action.");
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Failed to execute action.");
     } finally {
       setActionLoading(false);
     }
@@ -129,24 +152,77 @@ export default function AdminJobsPage() {
 
         {/* Filters */}
         <div className="flex flex-wrap items-center gap-3">
-          <select
-            value={statusFilter}
-            onChange={(e) => {
-              setStatusFilter(e.target.value);
-              setPage(1);
-            }}
-            className="bg-[#181a1f] border border-[#30333d] px-3 py-2 text-xs font-mono uppercase text-gray-200 focus:outline-none focus:border-amber-500"
-          >
-            <option value="">All Statuses</option>
-            <option value="queued">Queued</option>
-            <option value="processing">Processing</option>
-            <option value="completed">Completed</option>
-            <option value="failed">Failed</option>
-            <option value="cancelled">Cancelled</option>
-          </select>
+          <div className="relative">
+            <select
+              value={modeFilter}
+              onChange={(e) => {
+                setModeFilter(e.target.value);
+                setPage(1);
+              }}
+              className="bg-[#181a1f] border border-[#30333d] pl-3 pr-8 py-2 text-xs font-mono uppercase text-gray-200 focus:outline-none focus:border-amber-500 appearance-none cursor-pointer"
+            >
+              <option value="">All Modes</option>
+              <option value="cloud">Cloud</option>
+              <option value="on-device">On-Device</option>
+            </select>
+            <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+
+          <div className="relative">
+            <select
+              value={statusFilter}
+              onChange={(e) => {
+                setStatusFilter(e.target.value);
+                setPage(1);
+              }}
+              className="bg-[#181a1f] border border-[#30333d] pl-3 pr-8 py-2 text-xs font-mono uppercase text-gray-200 focus:outline-none focus:border-amber-500 appearance-none cursor-pointer"
+            >
+              <option value="">All Statuses</option>
+              <option value="queued">Queued</option>
+              <option value="processing">Processing</option>
+              <option value="completed">Completed</option>
+              <option value="failed">Failed</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+            <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+
+          <div className="relative">
+            <select
+              value={stageFilter}
+              onChange={(e) => {
+                setStageFilter(e.target.value);
+                setPage(1);
+              }}
+              className="bg-[#181a1f] border border-[#30333d] pl-3 pr-8 py-2 text-xs font-mono uppercase text-gray-200 focus:outline-none focus:border-amber-500 appearance-none cursor-pointer"
+            >
+              <option value="">All Stages</option>
+              <option value="initializing">Initializing</option>
+              <option value="downloading">Downloading</option>
+              <option value="transcribing">Transcribing</option>
+              <option value="detecting">Detecting</option>
+              <option value="clipping">Clipping</option>
+              <option value="uploading">Uploading</option>
+              <option value="completed">Completed</option>
+              <option value="failed">Failed</option>
+            </select>
+            <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
 
           <Button variant="outline" size="sm" onClick={loadJobs} className="font-mono text-xs">
             <RefreshCw className="w-3 h-3" />
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleSweepStuck}
+            disabled={isSweeping}
+            className="font-mono text-xs border-amber-500/40 text-amber-400 hover:bg-amber-500/10 flex items-center gap-1.5"
+            title="Clear stale jobs stuck in queue/processing > 20m"
+          >
+            <Flame className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline">{isSweeping ? "Clearing..." : "Sweep Stuck Jobs"}</span>
           </Button>
         </div>
       </div>
@@ -156,6 +232,14 @@ export default function AdminJobsPage() {
         {isLoading ? (
           <div className="p-12 text-center text-xs font-mono text-gray-400">
             Fetching video jobs...
+          </div>
+        ) : error ? (
+          <div className="p-12 text-center text-xs font-mono text-red-400 flex flex-col items-center gap-3">
+            <Video className="w-6 h-6 text-red-500" />
+            <span>{error}</span>
+            <Button variant="outline" size="sm" onClick={loadJobs}>
+              Retry Connection
+            </Button>
           </div>
         ) : jobs.length === 0 ? (
           <div className="p-12 text-center text-xs font-mono text-gray-400 flex flex-col items-center gap-2">
@@ -170,6 +254,7 @@ export default function AdminJobsPage() {
                   <th className="p-3">Job ID</th>
                   <th className="p-3">User</th>
                   <th className="p-3">Video Title</th>
+                  <th className="p-3">Mode</th>
                   <th className="p-3">Status</th>
                   <th className="p-3">Stage</th>
                   <th className="p-3">Progress</th>
@@ -191,6 +276,25 @@ export default function AdminJobsPage() {
                       {j.title}
                     </td>
                     <td className="p-3">
+                      {j.processingMode === "on-device" || j.isClientRendered ? (
+                        <span
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-950/70 text-emerald-400 border border-emerald-800/60"
+                          title="Processed on client's local device"
+                        >
+                          <Laptop className="w-3 h-3 text-emerald-400" />
+                          On-Device
+                        </span>
+                      ) : (
+                        <span
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-sky-950/70 text-sky-400 border border-sky-800/60"
+                          title="Processed on server / cloud worker"
+                        >
+                          <Cloud className="w-3 h-3 text-sky-400" />
+                          Cloud
+                        </span>
+                      )}
+                    </td>
+                    <td className="p-3">
                       <StatusBadge status={j.status} />
                     </td>
                     <td className="p-3 text-gray-400 uppercase text-[10px]">
@@ -209,7 +313,7 @@ export default function AdminJobsPage() {
                     </td>
                     <td className="p-3 text-gray-300">{j.clipCount}</td>
                     <td className="p-3 text-gray-400 text-[11px]">
-                      {new Date(j.createdAt).toLocaleDateString()}
+                      {formatDate(j.createdAt)}
                     </td>
                     <td className="p-3 text-right">
                       <div className="flex items-center justify-end gap-1.5">

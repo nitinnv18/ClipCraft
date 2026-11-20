@@ -1,4 +1,4 @@
-import asyncio
+import re
 from typing import Optional
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from app.core.config import settings
@@ -12,13 +12,18 @@ class Database:
 db_instance = Database()
 
 async def connect_to_mongo():
-    logger.info(f"Connecting to MongoDB at {settings.MONGODB_URI}...")
+    masked_uri = re.sub(r":([^/@]+)@", r":****@", settings.MONGODB_URI)
+    logger.info(f"Connecting to MongoDB at {masked_uri}...")
     try:
         db_instance.client = AsyncIOMotorClient(
             settings.MONGODB_URI,
             serverSelectionTimeoutMS=5000,
             connectTimeoutMS=5000,
-            socketTimeoutMS=15000
+            socketTimeoutMS=15000,
+            maxPoolSize=50,
+            minPoolSize=10,
+            maxIdleTimeMS=45000,
+            waitQueueTimeoutMS=5000
         )
         # Quick ping check before assigning db
         await db_instance.client.admin.command('ping')
@@ -36,6 +41,8 @@ async def connect_to_mongo():
         await db_instance.db.jobs.create_index([("status", 1), ("createdAt", -1)])
         await db_instance.db.clips.create_index("jobId")
         await db_instance.db.clips.create_index("userId")
+        await db_instance.db.clips.create_index("createdAt")
+        await db_instance.db.clips.create_index([("score", -1), ("createdAt", -1)])
         await db_instance.db.clips.create_index([("jobId", 1), ("score", -1)])
         await db_instance.db.clips.create_index([("userId", 1), ("createdAt", -1)])
         await db_instance.db.admins.create_index("email", unique=True)

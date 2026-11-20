@@ -4,21 +4,17 @@ import React, { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { adminApi } from "@/lib/adminApi";
+import { logger } from "@/lib/logger";
 import { AdminUserDetail } from "@/types/admin";
 import { StatusBadge } from "@/components/StatusBadge";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/Button";
+import { formatDate, formatDateTime } from "@/lib/utils";
 import {
-  User,
-  Video,
-  Film,
-  HardDrive,
   ArrowLeft,
   UserX,
   UserCheck,
   Trash2,
-  Calendar,
-  Clock,
   ExternalLink,
 } from "lucide-react";
 
@@ -38,7 +34,7 @@ export default function AdminUserDetailPage() {
       const res = await adminApi.getUserDetail(userId);
       setData(res);
     } catch (err) {
-      console.error(err);
+      logger.error("Failed to load user profile details", err);
     } finally {
       setIsLoading(false);
     }
@@ -63,8 +59,8 @@ export default function AdminUserDetailPage() {
       }
       setActionType(null);
       loadUser();
-    } catch (err: any) {
-      alert(err.message || "Failed to execute action.");
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Failed to execute action.");
     } finally {
       setActionLoading(false);
     }
@@ -172,7 +168,7 @@ export default function AdminUserDetailPage() {
           <span className="font-bold uppercase">Account Suspended</span>
           <span>Reason: {u.suspensionReason || "Admin policy"}</span>
           <span className="text-rose-400 text-[10px]">
-            Suspended by {u.suspendedBy} on {u.suspendedAt ? new Date(u.suspendedAt).toLocaleString() : ""}
+            Suspended by {u.suspendedBy} on {u.suspendedAt ? formatDateTime(u.suspendedAt) : ""}
           </span>
         </div>
       )}
@@ -212,7 +208,7 @@ export default function AdminUserDetailPage() {
                 <div key={j.id} className="p-3 bg-[#16181f] border border-[#26282f] flex items-center justify-between text-xs font-mono">
                   <div>
                     <div className="text-white font-bold truncate max-w-[240px]">{j.title}</div>
-                    <div className="text-[10px] text-gray-400">{new Date(j.createdAt).toLocaleDateString()} &bull; {j.clipCount} Clips</div>
+                    <div className="text-[10px] text-gray-400">{formatDate(j.createdAt)} &bull; {j.clipCount} Clips</div>
                   </div>
                   <div className="flex items-center gap-2">
                     <StatusBadge status={j.status} />

@@ -1,26 +1,18 @@
 from datetime import datetime
-from typing import Optional
-from pydantic import BaseModel, EmailStr, Field, ConfigDict
+from pydantic import BaseModel, EmailStr, Field
 
 class UserBase(BaseModel):
     email: EmailStr
 
 class UserCreate(UserBase):
-    password: str = Field(..., min_length=6)
+    password: str = Field(..., min_length=6, max_length=72)
 
 class UserLogin(UserBase):
-    password: str
-
-class UserInDB(UserBase):
-    id: str = Field(alias="_id")
-    passwordHash: str
-    createdAt: datetime = Field(default_factory=datetime.utcnow)
-    updatedAt: datetime = Field(default_factory=datetime.utcnow)
-
-    model_config = ConfigDict(populate_by_name=True)
+    password: str = Field(..., min_length=1, max_length=72)
 
 class UserResponse(UserBase):
     id: str
+    status: str = "active"
     createdAt: datetime
 
 class TokenResponse(BaseModel):

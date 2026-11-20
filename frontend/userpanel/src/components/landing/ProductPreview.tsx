@@ -7,16 +7,10 @@ import {
   Pause,
   Download,
   Scissors,
-  ExternalLink,
   Volume2,
   VolumeX,
-  Sparkles,
-  Subtitles,
   CheckCircle2,
-  Maximize2,
   Film,
-  Layers,
-  ArrowRight,
 } from "lucide-react";
 
 interface MockClip {
@@ -130,7 +124,7 @@ export const ProductPreview: React.FC = () => {
               </span>
             </div>
             <div className="flex items-center gap-4 text-gray-400 text-[11px]">
-              <span className="hidden sm:inline">Source: youtube.com/watch?v=k9X...</span>
+              <span className="hidden sm:inline">Source: keynote_presentation.mp4</span>
               <span className="text-emerald-400 flex items-center gap-1">
                 <CheckCircle2 className="w-3 h-3" /> 5 Clips Ready
               </span>

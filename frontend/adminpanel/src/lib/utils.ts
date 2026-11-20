@@ -21,3 +21,36 @@ export function getMediaUrl(url?: string): string {
   const cleanPath = url.startsWith("/") ? url : `/${url}`;
   return `${cleanBase}${cleanPath}`;
 }
+
+export function parseUtcDate(dateInput: string | Date | null | undefined): Date | null {
+  if (!dateInput) return null;
+  if (dateInput instanceof Date) return isNaN(dateInput.getTime()) ? null : dateInput;
+  let s = String(dateInput).trim();
+  if (!s) return null;
+  if (s.includes(" ") && !s.includes("T")) {
+    s = s.replace(" ", "T");
+  }
+  if (!s.endsWith("Z") && !/[+-]\d{2}:?\d{2}$/.test(s)) {
+    s += "Z";
+  }
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+export function formatDateTime(dateInput: string | Date | null | undefined): string {
+  const d = parseUtcDate(dateInput);
+  if (!d) return "—";
+  return d.toLocaleString();
+}
+
+export function formatTime(dateInput: string | Date | null | undefined): string {
+  const d = parseUtcDate(dateInput);
+  if (!d) return "";
+  return d.toLocaleTimeString();
+}
+
+export function formatDate(dateInput: string | Date | null | undefined): string {
+  const d = parseUtcDate(dateInput);
+  if (!d) return "—";
+  return d.toLocaleDateString();
+}
