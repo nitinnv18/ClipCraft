@@ -3,6 +3,7 @@ from typing import Optional, Any
 from pydantic import BaseModel, Field
 
 class ClipCandidate(BaseModel):
+    id: Optional[str] = None
     start: float
     end: float
     duration: Optional[float] = None

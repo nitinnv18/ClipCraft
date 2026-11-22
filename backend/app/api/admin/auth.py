@@ -22,7 +22,7 @@ security = HTTPBearer(auto_error=False)
 
 async def seed_default_super_admin():
     """Ensure a default Super Admin exists in the database and memory store based on environment variables."""
-    if not settings.SUPER_ADMIN_PASSWORD:
+    if not settings.SUPER_ADMIN_PASSWORD or not settings.SUPER_ADMIN_EMAIL:
         return
 
     admin_email = settings.SUPER_ADMIN_EMAIL.lower().strip()
@@ -68,7 +68,7 @@ async def seed_default_super_admin():
                 },
                 upsert=True
             )
-            logger.info(f"Synchronized default Super Admin: {admin_email}")
+            logger.info(f"🔐 Super Admin account verified: {admin_email}")
         except Exception as e:
             logger.warning(f"DB sync for super admin failed: {e}")
 

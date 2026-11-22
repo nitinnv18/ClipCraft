@@ -465,6 +465,7 @@ class FFmpegVideoProcessor(BaseVideoProcessor):
             "-c:v", "libx264",
             "-preset", preset_val,
             "-crf", crf_val,
+            "-pix_fmt", "yuv420p",
             "-c:a", "aac",
             "-b:a", "192k",
             "-movflags", "+faststart",

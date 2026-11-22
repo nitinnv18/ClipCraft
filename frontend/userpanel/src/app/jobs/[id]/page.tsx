@@ -42,8 +42,13 @@ export default function JobDetailPage() {
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [showCaptions, setShowCaptions] = useState<boolean>(true);
   const [copied, setCopied] = useState(false);
+  const [videoPlayFailed, setVideoPlayFailed] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    setVideoPlayFailed(false);
+  }, [activeClipId]);
 
   useEffect(() => {
     document.title = "ClipCraft - Job Details";
@@ -442,7 +447,18 @@ export default function JobDetailPage() {
 
                 {/* Video Element / Visual Center */}
                 <div className="absolute inset-0 flex items-center justify-center bg-black overflow-hidden">
-                  {activeMediaUrl ? (
+                  {videoPlayFailed && activeClip?.videoUrl?.startsWith("blob:") ? (
+                    <div className="flex flex-col items-center gap-2.5 p-4 text-center text-gray-400 font-mono text-xs max-w-xs">
+                      <AlertTriangle className="w-6 h-6 text-amber-400" />
+                      <span className="font-bold text-gray-200 uppercase text-[11px]">Local Session Expired</span>
+                      <span className="text-[10px] text-gray-400 leading-relaxed font-sans">
+                        On-device clips are stored in browser memory during that active session. Re-clip from the dashboard to regenerate and download.
+                      </span>
+                      <Link href="/dashboard" className="mt-1 px-3 py-1 bg-amber-500 hover:bg-amber-600 text-black font-mono font-bold text-[10px] uppercase transition-colors">
+                        Open Studio
+                      </Link>
+                    </div>
+                  ) : activeMediaUrl ? (
                     <video
                       ref={videoRef}
                       key={activeMediaUrl}
@@ -452,8 +468,9 @@ export default function JobDetailPage() {
                       autoPlay
                       controls={false}
                       className="w-full h-full object-contain"
-                      onPlay={() => setIsPlaying(true)}
+                      onPlay={() => { setIsPlaying(true); setVideoPlayFailed(false); }}
                       onPause={() => setIsPlaying(false)}
+                      onError={() => setVideoPlayFailed(true)}
                     />
                   ) : (
                     <div className="flex flex-col items-center gap-3 p-4 text-center text-gray-500 font-mono text-xs">

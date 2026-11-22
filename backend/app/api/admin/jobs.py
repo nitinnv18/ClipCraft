@@ -429,7 +429,7 @@ async def cancel_job(
 
 @router.post("/purge-stale")
 async def purge_stale_jobs(
-    max_age_minutes: int = Query(20, ge=1, le=1440, description="Age in minutes past which stuck jobs are marked failed"),
+    max_age_minutes: int = Query(4, ge=1, le=1440, description="Age in minutes past which stuck jobs are marked failed"),
     current_admin: AdminResponse = Depends(require_roles([AdminRole.SUPER_ADMIN, AdminRole.ADMIN]))
 ):
     """Admin tool to immediately sweep and mark all zombie/stuck jobs as failed."""

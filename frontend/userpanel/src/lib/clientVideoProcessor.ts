@@ -225,6 +225,9 @@ export async function initClientFFmpeg(onLog?: (msg: string) => void): Promise<F
  */
 export async function mountSourceVideo(file: File, inputName: string = "source_video.mp4"): Promise<void> {
   const ff = await initClientFFmpeg();
+  try {
+    await ff.deleteFile(inputName);
+  } catch (_) {}
   activeVirtualFiles.add(inputName);
   await ff.writeFile(inputName, await readFileAsUint8Array(file));
 }
@@ -247,6 +250,7 @@ export async function unmountSourceVideo(inputName: string = "source_video.mp4")
  * Kills the worker, deletes all virtual files (MEMFS), and reclaims up to 2GB browser RAM immediately.
  */
 export async function resetFFmpegSession(): Promise<void> {
+  ffmpegLoadingPromise = null;
   if (ffmpeg) {
     try {
       const files = new Set(["source_video.mp4", "audio.mp3", ...activeVirtualFiles]);
@@ -322,19 +326,19 @@ export async function renderClipOnClient(
   // Cinematic Gaming Landscape Fit Filter (Full 16:9 Landscape Video in Center + Ambient Blurred Top/Bottom)
   // Preserves 100% of the game screen, streamer webcam, HUD, and map without awkward crops
   // - Keeps natural aspect ratio on background (no vertical stretching or creepy distorted faces)
-  // - Heavy diffusion blur melts background into pure ambient color waves
-  // - Darkened backdrop (eq=brightness=-0.22) makes center video pop with studio contrast
+  // - Moderate cinematic blur preserves gameplay visibility without distraction
+  // - Subtle dark backdrop contrast makes center video pop with studio look
   // - Clean thin border frames the center 16:9 video seamlessly
   // - Strictly uses integer-even dimensions to guarantee zero memory access out of bounds in WASM YUV420p
   const splitFilterGraph1080 =
     `[0:v]split=2[bg_in][video_in];` +
-    `[bg_in]scale=-2:480,crop=270:480,boxblur=25:5,scale=1080:1920,eq=brightness=-0.22:contrast=0.85[bg];` +
+    `[bg_in]scale=-2:480,crop=270:480,boxblur=4:1,scale=1080:1920,eq=brightness=-0.12:contrast=0.95[bg];` +
     `[video_in]scale=1080:608,pad=1080:616:0:4:black[main_video];` +
     `[bg][main_video]overlay=0:652,format=yuv420p[outv]`;
 
   const splitFilterGraph720 =
     `[0:v]split=2[bg_in][video_in];` +
-    `[bg_in]scale=-2:320,crop=180:320,boxblur=20:5,scale=720:1280,eq=brightness=-0.22:contrast=0.85[bg];` +
+    `[bg_in]scale=-2:320,crop=180:320,boxblur=3:1,scale=720:1280,eq=brightness=-0.12:contrast=0.95[bg];` +
     `[video_in]scale=720:404,pad=720:412:0:4:black[main_video];` +
     `[bg][main_video]overlay=0:434,format=yuv420p[outv]`;
 
@@ -408,10 +412,14 @@ export async function renderClipOnClient(
         "ultrafast",
         "-crf",
         "22",
+        "-pix_fmt",
+        "yuv420p",
         "-c:a",
         "aac",
         "-b:a",
         "128k",
+        "-movflags",
+        "+faststart",
         "-y",
         outputName,
       ]);
@@ -431,10 +439,14 @@ export async function renderClipOnClient(
         "ultrafast",
         "-crf",
         "22",
+        "-pix_fmt",
+        "yuv420p",
         "-c:a",
         "aac",
         "-b:a",
         "128k",
+        "-movflags",
+        "+faststart",
         "-y",
         outputName,
       ]);
@@ -462,10 +474,14 @@ export async function renderClipOnClient(
           "ultrafast",
           "-crf",
           "24",
+          "-pix_fmt",
+          "yuv420p",
           "-c:a",
           "aac",
           "-b:a",
           "128k",
+          "-movflags",
+          "+faststart",
           "-y",
           outputName,
         ]);
@@ -485,10 +501,14 @@ export async function renderClipOnClient(
           "ultrafast",
           "-crf",
           "24",
+          "-pix_fmt",
+          "yuv420p",
           "-c:a",
           "aac",
           "-b:a",
           "128k",
+          "-movflags",
+          "+faststart",
           "-y",
           outputName,
         ]);
@@ -510,10 +530,14 @@ export async function renderClipOnClient(
         "ultrafast",
         "-crf",
         "26",
+        "-pix_fmt",
+        "yuv420p",
         "-c:a",
         "aac",
         "-b:a",
         "96k",
+        "-movflags",
+        "+faststart",
         "-y",
         outputName,
       ]);
@@ -665,12 +689,12 @@ export async function extractAudioFromVideo(
   activeVirtualFiles.add(outputAudioM4A);
   activeVirtualFiles.add(outputAudioMP3);
 
-  const MAX_FAST_COPY_BYTES = 4 * 1024 * 1024; // 4 MB threshold: if stream-copied audio is larger, compress to lightweight mono AAC
+  const MAX_FAST_COPY_BYTES = 24 * 1024 * 1024; // 24 MB threshold: Groq Whisper supports up to 25MB, stream copy takes <200ms
   const MAX_GROQ_BYTES = 24 * 1024 * 1024; // 24 MB safe threshold for Groq Whisper
   let successfulOutput = outputAudioM4A;
   let mimeType = "audio/mp4";
 
-  // Strategy 1: Fast stream copy (<200ms) if audio is already compact (<4MB)
+  // Strategy 1: Fast stream copy (<200ms) if audio is already within Groq limits (<24MB)
   try {
     await ff.exec([
       "-i", inputName,
@@ -681,7 +705,7 @@ export async function extractAudioFromVideo(
 
     const audioData = (await ff.readFile(outputAudioM4A)) as Uint8Array;
     if (audioData.byteLength > MAX_FAST_COPY_BYTES) {
-      throw new Error("Stream copied audio exceeds 4MB, compressing to ultra-lightweight 16kHz mono AAC");
+      throw new Error("Stream copied audio exceeds 24MB, compressing to ultra-lightweight 16kHz mono AAC");
     }
   } catch {
     // Strategy 2: High efficiency 32kbps mono 16kHz AAC (Fits 30 mins within ~2MB!)
@@ -792,7 +816,9 @@ export async function transcodeClipQuality(
       "-c:v", "libx264",
       "-preset", "veryfast",
       "-crf", "18",
+      "-pix_fmt", "yuv420p",
       "-c:a", "copy",
+      "-movflags", "+faststart",
       "-y", outName
     ]);
     const scaledData = (await ff.readFile(outName)) as Uint8Array;

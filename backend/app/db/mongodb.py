@@ -12,24 +12,36 @@ class Database:
 db_instance = Database()
 
 async def connect_to_mongo():
-    masked_uri = re.sub(r":([^/@]+)@", r":****@", settings.MONGODB_URI)
-    logger.info(f"Connecting to MongoDB at {masked_uri}...")
+    if not settings.MONGODB_URI:
+        if settings.ENVIRONMENT.lower() == "development":
+            mongo_uri = "mongodb://localhost:27017"
+        else:
+            logger.warning("MONGODB_URI not configured in environment. Utilizing in-memory data store fallback.")
+            db_instance.is_connected = False
+            return
+    else:
+        mongo_uri = settings.MONGODB_URI
+
+    masked_uri = re.sub(r":([^/@]+)@", r":****@", mongo_uri)
+    logger.debug(f"Connecting to MongoDB at {masked_uri}...")
     try:
         db_instance.client = AsyncIOMotorClient(
-            settings.MONGODB_URI,
+            mongo_uri,
             serverSelectionTimeoutMS=5000,
-            connectTimeoutMS=5000,
-            socketTimeoutMS=15000,
+            connectTimeoutMS=10000,
+            socketTimeoutMS=45000,
             maxPoolSize=50,
-            minPoolSize=10,
+            minPoolSize=0,
             maxIdleTimeMS=45000,
-            waitQueueTimeoutMS=5000
+            waitQueueTimeoutMS=5000,
+            retryWrites=True,
+            retryReads=True
         )
         # Quick ping check before assigning db
         await db_instance.client.admin.command('ping')
         db_instance.db = db_instance.client[settings.MONGODB_DB_NAME]
         db_instance.is_connected = True
-        logger.info("Successfully connected to MongoDB Atlas / cluster database.")
+        logger.info(f"🍃 Connected to MongoDB cluster database: {settings.MONGODB_DB_NAME}")
         
         # Ensure indexes for high-throughput query performance
         await db_instance.db.users.create_index("email", unique=True)

@@ -92,18 +92,82 @@ export const VideoProcessingProvider: React.FC<{ children: React.ReactNode }> = 
     previousSessionRef.current = previousSession;
   }, [previousSession]);
 
-  // Prevent accidental browser tab close / refresh during video rendering
+  const isSubmittingRef = useRef<boolean>(isSubmitting);
   useEffect(() => {
+    isSubmittingRef.current = isSubmitting;
+  }, [isSubmitting]);
+
+  const currentJobIdRef = useRef<string | null>(currentJobId);
+  useEffect(() => {
+    currentJobIdRef.current = currentJobId;
+  }, [currentJobId]);
+
+  const selectedFileRef = useRef<File | null>(selectedFile);
+  useEffect(() => {
+    selectedFileRef.current = selectedFile;
+  }, [selectedFile]);
+
+  const clientProgressRef = useRef<number>(clientProgress);
+  useEffect(() => {
+    clientProgressRef.current = clientProgress;
+  }, [clientProgress]);
+
+  // Prevent accidental browser tab close / refresh during video rendering & send beacon if user leaves
+  useEffect(() => {
+    const sendCancelBeacon = () => {
+      if (isSubmittingRef.current && currentJobIdRef.current) {
+        try {
+          const apiBase = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
+          const token = typeof localStorage !== "undefined" ? localStorage.getItem("clipcraft_token") : null;
+          const payload = JSON.stringify({
+            id: currentJobIdRef.current,
+            title: selectedFileRef.current?.name || "Video",
+            duration: 0,
+            clipCount: 0,
+            status: "cancelled",
+            progress: clientProgressRef.current || 5,
+            clips: [],
+          });
+
+          const url = `${apiBase}/api/jobs/client-sync`;
+          if (typeof navigator !== "undefined" && navigator.sendBeacon) {
+            const blob = new Blob([payload], { type: "application/json" });
+            navigator.sendBeacon(url, blob);
+          } else {
+            fetch(url, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+              },
+              body: payload,
+              keepalive: true,
+            }).catch(() => {});
+          }
+        } catch (_) {}
+      }
+    };
+
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (isSubmitting) {
+      if (isSubmittingRef.current) {
         e.preventDefault();
+        sendCancelBeacon();
         e.returnValue = "Video clipping is currently in progress. Leaving will cancel rendering.";
         return e.returnValue;
       }
     };
+
+    const handlePageHide = () => {
+      sendCancelBeacon();
+    };
+
     window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [isSubmitting]);
+    window.addEventListener("pagehide", handlePageHide);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      window.removeEventListener("pagehide", handlePageHide);
+    };
+  }, []);
 
   const revokeClipUrls = (clips: ClientClip[]) => {
     clips.forEach((c) => {
@@ -186,6 +250,7 @@ export const VideoProcessingProvider: React.FC<{ children: React.ReactNode }> = 
         clipCount: clientClips.length || 5,
         status: "failed",
         progress: clientProgress,
+        error: "Processing cancelled by user.",
         clips: clientClips,
       }).catch(() => {});
     }
@@ -240,11 +305,13 @@ export const VideoProcessingProvider: React.FC<{ children: React.ReactNode }> = 
       logger.warn("Initial job sync notice (resilient mode):", syncInitErr);
     }
 
+    let measuredDuration = 0;
     try {
       setUploadStatusText("Analyzing video metadata & file properties...");
       setClientProgress(10);
 
       const duration = await getVideoDuration(file);
+      measuredDuration = duration;
       setUploadStatusText("Groq AI detecting viral highlight moments...");
       setClientProgress(20);
 
@@ -275,7 +342,7 @@ export const VideoProcessingProvider: React.FC<{ children: React.ReactNode }> = 
         setClientProgress(15);
         const audioBlob = await withTimeout(
           extractAudioFromVideo(file, duration, mountedSource),
-          30000,
+          60000,
           "Audio extraction"
         );
         
@@ -379,12 +446,13 @@ export const VideoProcessingProvider: React.FC<{ children: React.ReactNode }> = 
       setClientProgress(25);
       const rendered: ClientClip[] = [];
 
-      let is4K = options.exportQuality === "2160p";
-      let is1440p = options.exportQuality === "1440p";
-      let is1080p = options.exportQuality === "1080p";
+      const isLargeFile = file.size > 800 * 1024 * 1024;
+      let is4K = !isLargeFile && options.exportQuality === "2160p";
+      let is1440p = !isLargeFile && options.exportQuality === "1440p";
+      let is1080p = !isLargeFile && options.exportQuality === "1080p";
       let is480p = options.exportQuality === "480p";
       // Default browser rendering to 720p HD Ready for rock-solid memory stability (prevents 2GB WASM out of bounds)
-      let is720p = options.exportQuality === "720p" || (!is4K && !is1440p && !is1080p && !is480p);
+      let is720p = isLargeFile || options.exportQuality === "720p" || (!is4K && !is1440p && !is1080p && !is480p);
 
       try {
         abortRef.current = false;
@@ -451,22 +519,20 @@ export const VideoProcessingProvider: React.FC<{ children: React.ReactNode }> = 
               setActiveClientClip(newClip);
             }
 
-            // Optimized sync: notify backend on 1st clip and halfway through, reducing DB writes by ~75% while keeping Admin panel live!
-            const shouldSyncIntermediate = i === 0 || i === Math.floor(rawClips.length / 2);
-            if (shouldSyncIntermediate) {
-              try {
-                await api.syncClientJob({
-                  id: activeJobId,
-                  title: file.name,
-                  duration,
-                  clipCount: options.clipCount,
-                  status: "processing",
-                  progress: basePct,
-                  clips: rendered,
-                });
-              } catch (err) {
-                logger.debug("Intermediate client job sync failed (non-blocking):", err);
-              }
+            // Real-time sync: notify backend on every completed clip so progress moves smoothly (e.g. 25% -> 45% -> 65% -> 85% -> 100%)
+            const currentClipProgress = Math.min(96, Math.round(25 + ((i + 1) / rawClips.length) * 70));
+            try {
+              await api.syncClientJob({
+                id: activeJobId,
+                title: file.name,
+                duration,
+                clipCount: options.clipCount,
+                status: "processing",
+                progress: currentClipProgress,
+                clips: rendered,
+              });
+            } catch (err) {
+              logger.debug("Intermediate client job sync notice:", err);
             }
 
             // Allow browser Garbage Collector to flush memory buffer between clips (prevents 70% freeze)
@@ -512,10 +578,22 @@ export const VideoProcessingProvider: React.FC<{ children: React.ReactNode }> = 
         );
       }
     } catch (err: unknown) {
-      const errMsg =
+      let errMsg =
         err instanceof Error
           ? err.message
           : "Failed to process video clips locally on device.";
+
+      const lower = errMsg.toLowerCase();
+      if (
+        lower.includes("memory") ||
+        lower.includes("out of bounds") ||
+        lower.includes("array buffer") ||
+        lower.includes("allocation failed") ||
+        (file.size > 800 * 1024 * 1024 && lower.includes("failed"))
+      ) {
+        errMsg = `Badi video file (${(file.size / (1024 * 1024 * 1024)).toFixed(2)} GB) ki wajah se browser device memory bhar gayi. Please choti clip ya 720p resolution try karein.`;
+      }
+
       setError(errMsg);
       setIsSubmitting(false);
 
@@ -523,10 +601,11 @@ export const VideoProcessingProvider: React.FC<{ children: React.ReactNode }> = 
         await api.syncClientJob({
           id: activeJobId,
           title: file.name,
-          duration: 0,
+          duration: measuredDuration,
           clipCount: options.clipCount,
           status: "failed",
           progress: clientProgress,
+          error: errMsg,
           clips: [],
         });
       } catch (err) {

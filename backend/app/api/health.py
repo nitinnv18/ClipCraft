@@ -14,7 +14,7 @@ def _is_ffmpeg_installed() -> bool:
         _ffmpeg_cached = bool(shutil.which("ffmpeg"))
     return _ffmpeg_cached
 
-@router.get("/health")
+@router.api_route("/health", methods=["GET", "HEAD"])
 async def health_check():
     return {
         "status": "ok",

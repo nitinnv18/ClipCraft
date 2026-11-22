@@ -11,14 +11,17 @@ from app.middleware.rate_limit import limiter, AUTH_LIMIT
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 security = HTTPBearer(auto_error=False)
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> UserResponse:
-    if not credentials:
+async def get_current_user(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+) -> UserResponse:
+    token = credentials.credentials if credentials else request.cookies.get("clipcraft_token")
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication token required.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    token = credentials.credentials
     payload = decode_access_token(token)
     if not payload or "sub" not in payload:
         raise HTTPException(
@@ -43,10 +46,13 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     return user
 
 
-async def get_current_user_optional(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> Optional[UserResponse]:
-    if not credentials:
+async def get_current_user_optional(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
+) -> Optional[UserResponse]:
+    token = credentials.credentials if credentials else request.cookies.get("clipcraft_token")
+    if not token:
         return None
-    token = credentials.credentials
     try:
         payload = decode_access_token(token)
         if not payload or "sub" not in payload:

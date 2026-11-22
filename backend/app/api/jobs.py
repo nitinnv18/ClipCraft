@@ -164,8 +164,9 @@ async def generate_clipping_plan(
     )
     
     formatted_clips = []
-    for c in ranked:
+    for idx, c in enumerate(ranked):
         clip_dict = c.model_dump() if hasattr(c, "model_dump") else c.dict()
+        clip_dict["id"] = getattr(c, "id", None) or f"clip_{idx + 1}"
         dur = max(1.0, c.end - c.start)
         hook_text = getattr(c, "hook", "") or getattr(c, "title", "Watch what happens next")
         words = hook_text.split()
@@ -261,8 +262,9 @@ async def generate_clipping_plan_with_audio(
     )
 
     formatted_clips = []
-    for c in ranked:
+    for idx, c in enumerate(ranked):
         clip_dict = c.model_dump() if hasattr(c, "model_dump") else c.dict()
+        clip_dict["id"] = getattr(c, "id", None) or f"clip_{idx + 1}"
         dur = max(1.0, c.end - c.start)
         clip_subs = []
 
@@ -330,6 +332,7 @@ class ClientJobSyncRequest(BaseModel):
     progress: Optional[int] = 100
     userId: Optional[str] = None
     userEmail: Optional[str] = None
+    error: Optional[str] = None
     clips: List[ClientClipSyncItem] = []
 
 
@@ -420,6 +423,10 @@ async def sync_client_job(
         saveToCloud=False
     )
 
+    # Preserve duration and thumbnail from previous sync if present
+    duration_val = req.duration if (req.duration and req.duration > 0) else (existing_job.get("duration", 0.0) if existing_job else 0.0)
+    thumb_val = (req.clips[0].thumbnailUrl if req.clips and req.clips[0].thumbnailUrl else None) or (existing_job.get("thumbnail") if existing_job else None)
+
     job_doc = {
         "_id": job_id,
         "id": job_id,
@@ -429,8 +436,8 @@ async def sync_client_job(
         "videoId": "client_render",
         "sourceType": "upload",
         "title": req.title or "Client Rendered Video",
-        "duration": req.duration,
-        "thumbnail": req.clips[0].thumbnailUrl if req.clips else None,
+        "duration": duration_val,
+        "thumbnail": thumb_val,
         "channel": "Local Device",
         "status": st,
         "progress": req.progress or (100 if status_str == "completed" else 10),
@@ -440,8 +447,9 @@ async def sync_client_job(
         "settings": job_settings.model_dump(),
         "createdAt": created_at,
         "startedAt": created_at,
+        "updatedAt": now,
         "completedAt": now if status_str == "completed" else None,
-        "error": None,
+        "error": req.error if (status_str == "failed" and req.error) else None,
         "clips": formatted_clips
     }
 

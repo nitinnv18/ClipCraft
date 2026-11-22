@@ -17,15 +17,22 @@ class RedisQueueProvider(BaseQueueProvider):
         self._memory_processing: Dict[str, Any] = {}
 
     async def initialize(self):
+        if not settings.REDIS_URL:
+            logger.info("⚡ REDIS_URL not configured. Utilizing asynchronous in-process queue.")
+            self.is_connected = False
+            return
+
         try:
             self.redis = aioredis.from_url(
                 settings.REDIS_URL,
                 decode_responses=True,
-                socket_timeout=2.0
+                socket_timeout=15.0,
+                socket_connect_timeout=5.0,
+                retry_on_timeout=True
             )
             await self.redis.ping()
             self.is_connected = True
-            logger.info("Connected to Redis queue service.")
+            logger.info("⚡ Connected to Redis queue service.")
         except Exception as e:
             logger.warning(f"Redis connection notice: {e}. Utilizing asynchronous in-process queue.")
             self.is_connected = False
@@ -53,7 +60,11 @@ class RedisQueueProvider(BaseQueueProvider):
                     item = json.loads(data)
                     logger.info(f"Job {item.get('job_id')} moved to processing queue.")
                     return item
-            except Exception as e:
+                return None
+            except (asyncio.TimeoutError, Exception) as e:
+                # Idle read timeouts during blocking pops are normal polling cycles
+                if isinstance(e, asyncio.TimeoutError) or "timeout" in str(e).lower():
+                    return None
                 logger.warning(f"Redis reliable pop error: {e}")
 
         try:

@@ -31,6 +31,7 @@ import {
   Smartphone,
   Hd,
   Gamepad2,
+  AlertTriangle,
 } from "lucide-react";
 
 function DashboardContent() {
@@ -92,20 +93,33 @@ function DashboardContent() {
     setIsExportingQuality(true);
     let finalUrl: string | null = null;
     try {
-      finalUrl = await transcodeClipQuality(
-        activeClientClip.blobUrl,
-        q,
-        activeClientClip.format || format
-      );
+      // If other clips are actively rendering in the background or Auto quality is picked,
+      // download original rendered blob immediately (0ms wait, zero WASM lock/concurrency errors)
+      if (isSubmitting || q === "auto" || q === "2160p") {
+        finalUrl = activeClientClip.blobUrl;
+      } else {
+        finalUrl = await transcodeClipQuality(
+          activeClientClip.blobUrl,
+          q,
+          activeClientClip.format || format
+        );
+      }
       const qualityTag = q === "auto" ? (detectedMeta?.qualityLabel || "Original") : q;
       const a = document.createElement("a");
-      a.href = finalUrl;
+      a.href = finalUrl || activeClientClip.blobUrl;
       a.download = `${activeClientClip.title.replace(/\s+/g, "_")}_${qualityTag}.mp4`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
     } catch (e) {
-      logger.error("Export quality conversion failed", e);
+      logger.error("Export quality conversion notice, falling back to direct clip download", e);
+      // Fallback: guaranteed instant download using rendered blob URL
+      const a = document.createElement("a");
+      a.href = activeClientClip.blobUrl;
+      a.download = `${activeClientClip.title.replace(/\s+/g, "_")}.mp4`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
     } finally {
       if (finalUrl && finalUrl !== activeClientClip.blobUrl && finalUrl.startsWith("blob:")) {
         setTimeout(() => {
@@ -706,6 +720,24 @@ function DashboardContent() {
                         <span>&bull;</span>
                         <span>Click or drag to replace</span>
                       </p>
+                      {selectedFile.size > 800 * 1024 * 1024 && (
+                        <div className="mt-2.5 p-3 bg-amber-950/80 border border-amber-500/70 text-xs text-amber-200 font-mono text-left flex items-start gap-2.5 w-full max-w-lg mx-auto">
+                          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-amber-300 uppercase tracking-wide">
+                                Heavy Video Notice ({(selectedFile.size / (1024 * 1024 * 1024)).toFixed(2)} GB)
+                              </span>
+                              <span className="text-[10px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 border border-amber-500/30 font-semibold">
+                                CAN PROCEED
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-gray-300 font-sans leading-relaxed">
+                              Ye video file kaafi badi hai. Browser RAM limit ki wajah se rendering beech me <strong>fail ya crash</strong> ho sakti hai. Behtar safety ke liye 720p HD mode me chalega aur processing ke dauran browser tab ko open rakhein.
+                            </p>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="flex flex-col items-center gap-2">

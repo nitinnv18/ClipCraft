@@ -150,6 +150,7 @@ class ApiClient {
     format?: string;
     status?: "processing" | "completed" | "failed";
     progress?: number;
+    error?: string;
     clips: (PlannedClip | Clip)[];
     userId?: string;
     userEmail?: string;

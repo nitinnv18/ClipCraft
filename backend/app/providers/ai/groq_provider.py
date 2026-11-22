@@ -75,7 +75,7 @@ class GroqProvider:
         
         self.base_url = settings.GROQ_API_BASE.rstrip("/")
         self.whisper_model = settings.GROQ_WHISPER_MODEL or "whisper-large-v3-turbo"
-        self.chat_model = settings.GROQ_CHAT_MODEL or "llama-3.3-70b-versatile"
+        self.chat_model = settings.GROQ_CHAT_MODEL or "openai/gpt-oss-120b"
 
     async def transcribe_audio_bytes(
         self,
@@ -272,10 +272,24 @@ Respond ONLY with valid JSON in this exact structure:
 
         async with get_groq_semaphore():
             client = await get_http_client()
-            for attempt in range(3):
+            candidate_models = []
+            for m in [
+                self.chat_model,
+                "openai/gpt-oss-120b",
+                "openai/gpt-oss-20b",
+                "llama-3.3-70b-versatile",
+                "qwen/qwen3.8-27b",
+                "llama-3.1-8b-instant",
+                "gemma2-9b-it",
+            ]:
+                if m and m not in candidate_models:
+                    candidate_models.append(m)
+
+            for attempt in range(max(3, len(candidate_models))):
+                current_model = candidate_models[min(attempt, len(candidate_models) - 1)]
                 try:
                     body = {
-                        "model": self.chat_model,
+                        "model": current_model,
                         "messages": [
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_prompt}
@@ -284,7 +298,7 @@ Respond ONLY with valid JSON in this exact structure:
                         "response_format": {"type": "json_object"}
                     }
 
-                    logger.info(f"Calling Groq Llama for viral clip selection (attempt {attempt+1})...")
+                    logger.info(f"Calling Groq AI ({current_model}) for viral clip selection (attempt {attempt+1})...")
                     resp = await client.post(url, headers=headers, json=body, timeout=45.0)
                     if resp.status_code == 200:
                         data = resp.json()
@@ -316,15 +330,21 @@ Respond ONLY with valid JSON in this exact structure:
                             ))
 
                         if candidates:
-                            logger.info(f"Groq Llama successfully generated {len(candidates)} viral candidates.")
+                            logger.info(f"Groq AI successfully generated {len(candidates)} viral candidates using {current_model}.")
                             return candidates
+                    elif resp.status_code == 404:
+                        logger.warning(f"Groq model '{current_model}' not found (404: {resp.text}), auto-switching to next fallback model...")
+                        continue
+                    elif resp.status_code == 400:
+                        logger.warning(f"Groq model '{current_model}' returned 400 ({resp.text}), auto-switching to next fallback model...")
+                        continue
                     elif resp.status_code in (429, 503) and attempt < 2:
                         wait_time = 1.5 * (attempt + 1)
-                        logger.warning(f"Groq Llama rate limit ({resp.status_code}), retrying in {wait_time}s...")
+                        logger.warning(f"Groq AI rate limit ({resp.status_code}), retrying in {wait_time}s...")
                         await asyncio.sleep(wait_time)
                         continue
                     else:
-                        logger.warning(f"Groq Llama API returned {resp.status_code}: {resp.text}")
+                        logger.warning(f"Groq Chat API returned {resp.status_code} for '{current_model}': {resp.text}")
                 except Exception as err:
                     if attempt < 2:
                         await asyncio.sleep(1.0)

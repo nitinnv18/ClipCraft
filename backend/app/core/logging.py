@@ -24,69 +24,96 @@ class ColoredIconFormatter(logging.Formatter):
     NO_COLOR = bool(os.getenv("NO_COLOR", ""))
 
     LEVEL_BADGES = {
-        logging.DEBUG: ("🔍 DEBUG", DIM + MAGENTA),
-        logging.INFO: ("✨ INFO ", GREEN),
-        logging.WARNING: ("⚠️  WARN ", YELLOW),
-        logging.ERROR: ("❌ ERROR", RED + BOLD),
-        logging.CRITICAL: ("🚨 FATAL", RED + BOLD),
+        logging.DEBUG: ("DEBUG", DIM + MAGENTA),
+        logging.INFO: ("INFO ", GREEN),
+        logging.WARNING: ("WARN ", YELLOW),
+        logging.ERROR: ("ERROR", RED + BOLD),
+        logging.CRITICAL: ("FATAL", RED + BOLD),
     }
 
     CONTEXT_ICONS = [
-        (re.compile(r"Successfully processed", re.I), "🎉 "),
-        (re.compile(r"Starting", re.I), "🚀 "),
-        (re.compile(r"Shutting down", re.I), "🛑 "),
-        (re.compile(r"Cleaned up|cleanup", re.I), "🧹 "),
-        (re.compile(r"MongoDB|Mongo", re.I), "🍃 "),
-        (re.compile(r"Redis|queued|queue", re.I), "⚡ "),
-        (re.compile(r"User logged in|Registered new user|User suspended|User unsuspended", re.I), "👤 "),
-        (re.compile(r"Admin|Super Admin", re.I), "🔐 "),
-        (re.compile(r"cancelled", re.I), "⏹️ "),
-        (re.compile(r"retried", re.I), "🔄 "),
-        (re.compile(r"deleted", re.I), "🗑️ "),
-        (re.compile(r"settings updated", re.I), "⚙️ "),
-        (re.compile(r"\[Job\s+|video clipping job|job_", re.I), "🎬 "),
-        (re.compile(r"Groq\s*Whisper|Transcribing|Whisper|audio", re.I), "🎙️ "),
-        (re.compile(r"Groq|Llama|AI", re.I), "🤖 "),
-        (re.compile(r"Ranking|high-retention|Selected \d+", re.I), "📊 "),
-        (re.compile(r"Rendering clip|FFmpeg", re.I), "✂️ "),
-        (re.compile(r"YouTube|stream", re.I), "📡 "),
-        (re.compile(r"Storage|Cloudinary", re.I), "💾 "),
-        (re.compile(r"probe", re.I), "🔍 "),
+        (re.compile(r"Successfully processed|\bsuccess\b", re.I), "🎉 "),
+        (re.compile(r"\b(Starting|Initialized|Ready)\b", re.I), "🚀 "),
+        (re.compile(r"\b(Shutting down|stopping)\b", re.I), "🛑 "),
+        (re.compile(r"\b(Cleaned up|cleanup|orphaned|reap|reaped|purged)\b", re.I), "🧹 "),
+        (re.compile(r"\b(MongoDB|Mongo|database)\b", re.I), "🍃 "),
+        (re.compile(r"\b(Redis|queue|queued)\b", re.I), "⚡ "),
+        (re.compile(r"User logged in|Registered new user|User suspended|User unsuspended|\buser\b", re.I), "👤 "),
+        (re.compile(r"\b(Admin|Super Admin|auth|token|permission|unauthorized|forbidden|credentials)\b", re.I), "🔐 "),
+        (re.compile(r"\b(cancelled|abort|aborted)\b", re.I), "⏹️ "),
+        (re.compile(r"\b(retried|retry|retrying)\b", re.I), "🔄 "),
+        (re.compile(r"\b(deleted|delete|remove|removed)\b", re.I), "🗑️ "),
+        (re.compile(r"\b(settings updated|setting|settings)\b", re.I), "⚙️ "),
+        (re.compile(r"\[Job\s+|video clipping job|\bjob_[a-zA-Z0-9]+\b", re.I), "🎬 "),
+        (re.compile(r"\b(Whisper|transcribing|transcription|speech|audio)\b", re.I), "🎙️ "),
+        (re.compile(r"\b(Groq|Llama|AI)\b", re.I), "🤖 "),
+        (re.compile(r"\b(Ranking|high-retention|highlights?)\b|Selected \d+", re.I), "📊 "),
+        (re.compile(r"\b(Rendering clip|FFmpeg|encode|transcode)\b", re.I), "✂️ "),
+        (re.compile(r"\b(YouTube|stream|oEmbed|yt-dlp)\b", re.I), "📡 "),
+        (re.compile(r"\b(Storage|Cloudinary|upload|uploading|CDN)\b", re.I), "💾 "),
+        (re.compile(r"\b(probe|ffprobe|inspect)\b", re.I), "🔍 "),
+        (re.compile(r"rate limit|429|\bthrottle\b", re.I), "⏳ "),
+        (re.compile(r"\b(timeout|timed out)\b", re.I), "⏱️ "),
+        (re.compile(r"\b(network|http|connection|connect)\b", re.I), "🌐 "),
     ]
+
+    DEFAULT_LEVEL_ICONS = {
+        logging.DEBUG: "🔍 ",
+        logging.INFO: "",
+        logging.WARNING: "⚠️  ",
+        logging.ERROR: "❌ ",
+        logging.CRITICAL: "🚨 ",
+    }
 
     def format(self, record: logging.LogRecord) -> str:
         time_str = self.formatTime(record, "%H:%M:%S")
         badge_text, level_color = self.LEVEL_BADGES.get(
-            record.levelno, (record.levelname.ljust(7), "")
+            record.levelno, (record.levelname.ljust(5), "")
         )
 
         raw_msg = record.getMessage()
 
-        # Deduce contextual icon
+        # Deduce contextual icon (skip if message starts with divider or already has an emoji/symbol)
         icon = ""
-        first_chars = raw_msg[:2] if raw_msg else ""
-        # Check if raw_msg already has an emoji/unicode symbol
-        if not any(ord(c) > 10000 for c in first_chars):
+        has_symbol = bool(raw_msg and (
+            ord(raw_msg[0]) > 10000 or
+            (0x2600 <= ord(raw_msg[0]) <= 0x27BF) or
+            raw_msg.startswith(("─", "-", "=", "┌", "│", "├", "└"))
+        ))
+        if not has_symbol:
             for pattern, ic in self.CONTEXT_ICONS:
                 if pattern.search(raw_msg):
                     icon = ic
                     break
+            if not icon:
+                icon = self.DEFAULT_LEVEL_ICONS.get(record.levelno, "")
 
         if self.NO_COLOR:
             time_tag = f"[{time_str}]"
-            sep = "│"
-            formatted = f"{time_tag} {sep} {badge_text} {sep} {icon}{raw_msg}"
+            formatted = f"{time_tag} {badge_text} {icon}{raw_msg}"
         else:
             time_tag = f"{self.GRAY}[{time_str}]{self.RESET}"
-            sep = f"{self.GRAY}│{self.RESET}"
             badge = f"{level_color}{badge_text}{self.RESET}"
             msg_color = level_color if record.levelno >= logging.WARNING else ""
             msg = f"{msg_color}{icon}{raw_msg}{self.RESET}" if msg_color else f"{icon}{raw_msg}"
-            formatted = f"{time_tag} {sep} {badge} {sep} {msg}"
+            formatted = f"{time_tag} {badge} {msg}"
 
         if record.exc_info:
             formatted += "\n" + self.formatException(record.exc_info)
         return formatted
+
+
+class HealthCheckFilter(logging.Filter):
+    """
+    Suppresses routine 200 OK health check access logs from flooding the console,
+    matching enterprise microservice logging standards (e.g. Datadog, CloudWatch).
+    Failures (non-200) are still logged.
+    """
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        if "GET /health" in msg or "GET /api/health" in msg:
+            return " 200 " not in msg
+        return True
 
 
 def setup_logging():
@@ -99,6 +126,10 @@ def setup_logging():
     
     root.setLevel(logging.INFO)
     root.addHandler(handler)
+
+    # Filter out health check spam from uvicorn access logs
+    uvicorn_access = logging.getLogger("uvicorn.access")
+    uvicorn_access.addFilter(HealthCheckFilter())
 
 
 logger = logging.getLogger("clipcraft")
